@@ -189,6 +189,7 @@ class _LayoutBytes extends StatelessWidget {
     return Image.memory(
       bytes,
       fit: BoxFit.contain,
+      cacheWidth: 900,
       filterQuality: FilterQuality.medium,
     );
   }

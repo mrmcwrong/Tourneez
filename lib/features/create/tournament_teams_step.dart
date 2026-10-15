@@ -80,7 +80,11 @@ class TournamentTeamsStep extends ConsumerWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: FilledButton.tonalIcon(
-                          onPressed: () => showTeamEditorSheet(context, ref),
+                          onPressed: () async {
+                            final team =
+                                await showTeamEditorSheet(context, ref);
+                            if (team != null) onToggle(team.id);
+                          },
                           icon: const Icon(Icons.add),
                           label: const Text('New team'),
                         ),

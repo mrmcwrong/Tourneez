@@ -7,8 +7,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:tourneez/data/backup.dart';
+import 'package:tourneez/domain/models.dart';
 import 'package:tourneez/providers/providers.dart';
 import 'package:tourneez/providers/theme_provider.dart';
+import 'package:tourneez/providers/viewer_provider.dart';
+import 'package:tourneez/ui/viewer_controls.dart';
 import 'package:tourneez/ui/widgets.dart';
 
 class AppSettingsScreen extends ConsumerWidget {
@@ -209,6 +212,8 @@ class AppSettingsScreen extends ConsumerWidget {
     if (!context.mounted) return;
 
     await ref.read(themeModeProvider.notifier).setMode(ThemeMode.system);
+    await ref.read(viewerProvider.notifier).setRole(AppRole.manager);
+    await ref.read(viewerProvider.notifier).setFamilyTeam(null);
     if (!context.mounted) return;
 
     context.go('/');
@@ -220,6 +225,7 @@ class AppSettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(themeModeProvider);
+    final manager = ref.watch(viewerProvider).isManager;
     final scheme = Theme.of(context).colorScheme;
     final narrow = MediaQuery.sizeOf(context).width < 380;
 
@@ -240,6 +246,7 @@ class AppSettingsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
+          const ViewerSwitcherCard(),
           const SectionHeader(title: 'Appearance'),
           Card(
             child: Padding(
@@ -284,6 +291,7 @@ class AppSettingsScreen extends ConsumerWidget {
               ),
             ),
           ),
+          if (manager) ...[
           const SectionHeader(title: 'Data'),
           Card(
             child: Column(
@@ -332,6 +340,7 @@ class AppSettingsScreen extends ConsumerWidget {
                   ),
             ),
           ),
+          ],
         ],
       ),
     );

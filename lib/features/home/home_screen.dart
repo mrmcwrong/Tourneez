@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:tourneez/domain/models.dart';
+import 'package:tourneez/features/home/parent_home_screen.dart';
 import 'package:tourneez/providers/providers.dart';
+import 'package:tourneez/providers/viewer_provider.dart';
 import 'package:tourneez/ui/theme.dart';
+import 'package:tourneez/ui/viewer_controls.dart';
 import 'package:tourneez/ui/widgets.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -13,6 +16,8 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tournamentsAsync = ref.watch(tournamentsProvider);
     final leaguesAsync = ref.watch(leaguesProvider);
+    final manager = ref.watch(viewerProvider).isManager;
+    if (!manager) return const ParentHomeScreen();
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
@@ -29,6 +34,29 @@ class HomeScreen extends ConsumerWidget {
               style: TourneezText.brand.copyWith(color: scheme.onSurface),
             ),
             actions: [
+              ActionChip(
+                avatar: Icon(
+                  manager
+                      ? Icons.admin_panel_settings_outlined
+                      : Icons.family_restroom_outlined,
+                  size: 18,
+                ),
+                label: Text(manager ? 'Manager' : 'Family'),
+                onPressed: () {
+                  showModalBottomSheet<void>(
+                    context: context,
+                    showDragHandle: true,
+                    builder: (ctx) => const SafeArea(
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: ViewerSwitcherCard(),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(width: 4),
+              if (manager)
               IconButton(
                 tooltip: 'Teams',
                 onPressed: () => context.push('/teams'),
@@ -112,13 +140,14 @@ class HomeScreen extends ConsumerWidget {
             data: (tournaments) {
               final leagues = leaguesAsync.value ?? const <League>[];
               if (tournaments.isEmpty && leagues.isEmpty) {
-                return const SliverFillRemaining(
+                return SliverFillRemaining(
                   hasScrollBody: false,
                   child: EmptyState(
                     icon: Icons.emoji_events_outlined,
                     title: 'Ready when you are',
-                    message:
-                        'Spin up a knockout bracket or a multi-division league with promotion and relegation.',
+                    message: manager
+                        ? 'Spin up a knockout bracket or a multi-division league with promotion and relegation.'
+                        : 'When a league is published for families, its schedule and scores show up here.',
                   ),
                 );
               }
@@ -126,9 +155,11 @@ class HomeScreen extends ConsumerWidget {
               final active = tournaments
                   .where((t) => t.status == TournamentStatus.active)
                   .toList();
-              final drafts = tournaments
-                  .where((t) => t.status == TournamentStatus.draft)
-                  .toList();
+              final drafts = manager
+                  ? tournaments
+                      .where((t) => t.status == TournamentStatus.draft)
+                      .toList()
+                  : const <Tournament>[];
               final done = tournaments
                   .where((t) => t.status == TournamentStatus.completed)
                   .toList();
@@ -156,10 +187,12 @@ class HomeScreen extends ConsumerWidget {
           ),
         ],
       ),
-      floatingActionButton: _CreateSpeedDial(
-        onLeague: () => context.push('/create-league'),
-        onTournament: () => context.push('/create'),
-      ),
+      floatingActionButton: manager
+          ? _CreateSpeedDial(
+              onLeague: () => context.push('/create-league'),
+              onTournament: () => context.push('/create'),
+            )
+          : null,
     );
   }
 }
@@ -307,7 +340,8 @@ class _TournamentTile extends ConsumerWidget {
         subtitle: Text(tournament.format.label),
         trailing: StatusChip(status: tournament.status),
         onTap: () => context.push('/tournament/${tournament.id}'),
-        onLongPress: () async {
+        onLongPress: ref.watch(viewerProvider).isManager
+            ? () async {
           final confirm = await showDialog<bool>(
             context: context,
             builder: (ctx) => keyboardAware(
@@ -331,7 +365,8 @@ class _TournamentTile extends ConsumerWidget {
           if (confirm == true) {
             await ref.read(repositoryProvider).deleteTournament(tournament.id);
           }
-        },
+        }
+            : null,
       ),
     );
   }

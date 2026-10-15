@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:tourneez/domain/models.dart';
 import 'package:tourneez/providers/providers.dart';
+import 'package:tourneez/providers/viewer_provider.dart';
+import 'package:tourneez/ui/viewer_controls.dart';
 import 'package:tourneez/ui/format_config_editor.dart';
 import 'package:tourneez/ui/int_number_field.dart';
 import 'package:tourneez/ui/team_list_picker.dart';
@@ -341,6 +343,10 @@ class LeagueHubScreen extends ConsumerWidget {
           );
         }
 
+        final manager = ref.watch(viewerProvider).isManager;
+        final showVenues =
+            manager || league.config.familyView.showVenues;
+
         return Scaffold(
           appBar: AppBar(
             leading: IconButton(
@@ -349,6 +355,7 @@ class LeagueHubScreen extends ConsumerWidget {
             ),
             title: Text(league.name),
             actions: [
+              if (showVenues)
               IconButton(
                 tooltip: 'League venues map',
                 onPressed: () {
@@ -368,8 +375,9 @@ class LeagueHubScreen extends ConsumerWidget {
               ),
               LeagueStatusChip(
                 status: league.status,
-                onTap: league.status == LeagueStatus.active ||
-                        league.status == LeagueStatus.completed
+                onTap: manager &&
+                        (league.status == LeagueStatus.active ||
+                            league.status == LeagueStatus.completed)
                     ? () => _offerResetLeagueScores(context, ref, league)
                     : null,
               ),
@@ -399,12 +407,24 @@ class LeagueHubScreen extends ConsumerWidget {
                         ),
                   ),
                   const SizedBox(height: 12),
+                  if (manager)
+                    FamilyViewSettingsCard(
+                      settings: league.config.familyView,
+                      onChanged: (next) {
+                        ref.read(repositoryProvider).updateLeague(
+                              id: league.id,
+                              config: league.config.copyWith(familyView: next),
+                            );
+                      },
+                    ),
+                  const SizedBox(height: 12),
                   ...divisions.map(
                     (d) => _DivisionCard(league: league, division: d),
                   ),
                   const SizedBox(height: 16),
-                  if (league.status == LeagueStatus.draft ||
-                      divisions.every((d) => d.currentTournamentId == null))
+                  if (manager &&
+                      (league.status == LeagueStatus.draft ||
+                          divisions.every((d) => d.currentTournamentId == null)))
                     FilledButton.icon(
                       onPressed: () async {
                         final err = await ref
@@ -425,7 +445,7 @@ class LeagueHubScreen extends ConsumerWidget {
                             : 'Start season ${league.seasonNumber}',
                       ),
                     ),
-                  if (league.canUsePromoReleg && promoReady)
+                  if (manager && league.canUsePromoReleg && promoReady)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: FilledButton.tonalIcon(
@@ -435,7 +455,7 @@ class LeagueHubScreen extends ConsumerWidget {
                         label: const Text('Apply promotion & relegation'),
                       ),
                     ),
-                  if (!league.canUsePromoReleg && nextSeasonReady)
+                  if (manager && !league.canUsePromoReleg && nextSeasonReady)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: FilledButton(
@@ -463,6 +483,7 @@ class LeagueHubScreen extends ConsumerWidget {
                     icon: const Icon(Icons.history),
                     label: const Text('Past seasons'),
                   ),
+                  if (manager) ...[
                   const SizedBox(height: 8),
                   OutlinedButton(
                     style:
@@ -495,6 +516,7 @@ class LeagueHubScreen extends ConsumerWidget {
                     },
                     child: const Text('Delete league'),
                   ),
+                  ],
                 ],
               );
             },
@@ -619,10 +641,11 @@ class _DivisionCard extends ConsumerWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                OutlinedButton(
-                  onPressed: () => _editRoster(context, ref),
-                  child: const Text('Edit roster'),
-                ),
+                if (ref.watch(viewerProvider).isManager)
+                  OutlinedButton(
+                    onPressed: () => _editRoster(context, ref),
+                    child: const Text('Edit roster'),
+                  ),
                 if (division.currentTournamentId != null)
                   FilledButton.tonal(
                     onPressed: () => context.push(
@@ -639,11 +662,9 @@ class _DivisionCard extends ConsumerWidget {
   }
 
   Future<void> _editRoster(BuildContext context, WidgetRef ref) async {
-    final library = ref.read(teamsProvider).value ?? const [];
     final current =
         await ref.read(repositoryProvider).getDivisionTeams(division.id);
     final selected = current.map((t) => t.teamId).toSet();
-    final lists = ref.read(teamListsProvider).value ?? const [];
     final occupied = await ref.read(repositoryProvider).teamsInOtherDivisions(
           leagueId: league.id,
           excludeDivisionId: division.id,
@@ -654,110 +675,124 @@ class _DivisionCard extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setLocal) {
-            return SafeArea(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  0,
-                  16,
-                  16 + MediaQuery.viewInsetsOf(ctx).bottom,
-                ),
-                child: SizedBox(
-                  height: MediaQuery.sizeOf(ctx).height * 0.7,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        '${division.name} roster',
-                        style: Theme.of(ctx).textTheme.titleLarge,
-                      ),
-                      Text(
-                        'Teams already assigned to another division cannot be selected.',
-                        style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(ctx)
-                                  .colorScheme
-                                  .onSurface
-                                  .withValues(alpha: 0.65),
-                            ),
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: TeamListPicker(
-                          library: library,
-                          lists: lists,
-                          selected: selected,
-                          occupiedElsewhere: occupied,
-                          onToggleTeam: (id) {
-                            setLocal(() {
-                              if (selected.contains(id)) {
-                                selected.remove(id);
-                              } else {
-                                selected.add(id);
-                              }
-                            });
-                          },
-                          onApplyList: (list) {
-                            final available = list.teamIds
-                                .where((tid) => !occupied.containsKey(tid))
-                                .toSet();
-                            final skipped =
-                                list.teamIds.length - available.length;
-                            setLocal(() {
-                              selected
-                                ..clear()
-                                ..addAll(available);
-                            });
-                            if (skipped > 0 && ctx.mounted) {
-                              ScaffoldMessenger.of(ctx).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Skipped $skipped team${skipped == 1 ? '' : 's'} already in another division.',
-                                  ),
-                                ),
-                              );
-                            } else if (ctx.mounted) {
-                              ScaffoldMessenger.of(ctx).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Loaded "${list.name}" (${available.length} teams)',
-                                  ),
-                                ),
-                              );
-                            }
-                          },
-                        ),
-                      ),
-                      FilledButton(
-                        onPressed: () async {
-                          final err = await ref
-                              .read(repositoryProvider)
-                              .setDivisionTeams(
-                                divisionId: division.id,
-                                teamIds: selected.toList(),
-                              );
-                          if (ctx.mounted) {
-                            if (err != null) {
-                              ScaffoldMessenger.of(ctx).showSnackBar(
-                                SnackBar(content: Text(err)),
-                              );
-                            } else {
-                              Navigator.pop(ctx);
-                            }
-                          }
-                        },
-                        child: Text('Save (${selected.length} teams)'),
-                      ),
-                    ],
-                  ),
+      useRootNavigator: true,
+      builder: (ctx) => _DivisionRosterSheet(
+        division: division,
+        initialSelected: selected,
+        occupied: occupied,
+      ),
+    );
+  }
+}
+
+class _DivisionRosterSheet extends ConsumerStatefulWidget {
+  const _DivisionRosterSheet({
+    required this.division,
+    required this.initialSelected,
+    required this.occupied,
+  });
+
+  final Division division;
+  final Set<int> initialSelected;
+  final Map<int, String> occupied;
+
+  @override
+  ConsumerState<_DivisionRosterSheet> createState() =>
+      _DivisionRosterSheetState();
+}
+
+class _DivisionRosterSheetState extends ConsumerState<_DivisionRosterSheet> {
+  late final Set<int> _selected = {...widget.initialSelected};
+
+  @override
+  Widget build(BuildContext context) {
+    final library = ref.watch(teamsProvider).value ?? const <Team>[];
+    final lists = ref.watch(teamListsProvider).value ?? const <TeamList>[];
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          0,
+          16,
+          16 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.7,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '${widget.division.name} roster',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              Text(
+                'Teams already assigned to another division cannot be selected.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65),
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: TeamListPicker(
+                  library: library,
+                  lists: lists,
+                  selected: _selected,
+                  occupiedElsewhere: widget.occupied,
+                  onToggleTeam: (id) {
+                    setState(() {
+                      if (_selected.contains(id)) {
+                        _selected.remove(id);
+                      } else {
+                        _selected.add(id);
+                      }
+                    });
+                  },
+                  onApplyList: (list) {
+                    final available = list.teamIds
+                        .where((tid) => !widget.occupied.containsKey(tid))
+                        .toSet();
+                    final skipped = list.teamIds.length - available.length;
+                    setState(() {
+                      _selected
+                        ..clear()
+                        ..addAll(available);
+                    });
+                    if (skipped > 0) {
+                      showAppSnackBar(
+                        'Skipped $skipped team${skipped == 1 ? '' : 's'} already in another division.',
+                      );
+                    } else {
+                      showAppSnackBar(
+                        'Loaded "${list.name}" (${available.length} teams)',
+                      );
+                    }
+                  },
                 ),
               ),
-            );
-          },
-        );
-      },
+              FilledButton(
+                onPressed: () async {
+                  final nav = Navigator.of(context);
+                  final err = await ref.read(repositoryProvider).setDivisionTeams(
+                        divisionId: widget.division.id,
+                        teamIds: _selected.toList(),
+                      );
+                  if (!mounted) return;
+                  if (err != null) {
+                    showAppSnackBar(err);
+                  } else {
+                    nav.pop();
+                  }
+                },
+                child: Text('Save (${_selected.length} teams)'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

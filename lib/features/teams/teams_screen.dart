@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:tourneez/domain/models.dart';
 import 'package:tourneez/providers/providers.dart';
+import 'package:tourneez/providers/viewer_provider.dart';
 import 'package:tourneez/ui/team_editor.dart';
 import 'package:tourneez/ui/team_list_picker.dart';
 import 'package:tourneez/ui/widgets.dart';
@@ -12,6 +13,7 @@ class TeamsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final manager = ref.watch(viewerProvider).isManager;
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -33,14 +35,16 @@ class TeamsScreen extends ConsumerWidget {
               Tab(text: 'Lists'),
             ],
           ),
-          actions: teamLibraryActions(context, ref),
+          actions: manager ? teamLibraryActions(context, ref) : null,
         ),
         body: const TabBarView(children: [_TeamLibraryTab(), _TeamListsTab()]),
-        floatingActionButton: FloatingActionButton(
-          tooltip: 'Custom team',
-          onPressed: () => showTeamEditorSheet(context, ref),
-          child: const Icon(Icons.add),
-        ),
+        floatingActionButton: manager
+            ? FloatingActionButton(
+                tooltip: 'Custom team',
+                onPressed: () => showTeamEditorSheet(context, ref),
+                child: const Icon(Icons.add),
+              )
+            : null,
       ),
     );
   }
@@ -103,9 +107,14 @@ class _TeamLibraryTab extends ConsumerWidget {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 subtitle: subtitle.isEmpty ? null : Text(subtitle),
-                trailing: PowerBadge(power: team.powerRating),
-                onTap: () => showTeamEditorSheet(context, ref, team: team),
-                onLongPress: () async {
+                trailing: ref.watch(viewerProvider).isManager
+                    ? PowerBadge(power: team.powerRating)
+                    : null,
+                onTap: ref.watch(viewerProvider).isManager
+                    ? () => showTeamEditorSheet(context, ref, team: team)
+                    : null,
+                onLongPress: ref.watch(viewerProvider).isManager
+                    ? () async {
                   final ok = await showDialog<bool>(
                     context: context,
                     builder: (ctx) => AlertDialog(
@@ -126,7 +135,8 @@ class _TeamLibraryTab extends ConsumerWidget {
                   if (ok == true) {
                     await ref.read(repositoryProvider).deleteTeam(team.id);
                   }
-                },
+                }
+                    : null,
               ),
             );
           },

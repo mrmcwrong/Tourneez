@@ -4,6 +4,7 @@ import 'package:tourneez/providers/providers.dart';
 import 'package:tourneez/providers/theme_provider.dart';
 import 'package:tourneez/router.dart';
 import 'package:tourneez/ui/theme.dart';
+import 'package:tourneez/ui/widgets.dart';
 
 /// Bump when bundled logo assets change so existing teams pick them up once.
 const _logoSyncKey = 'template_logo_sync_v4';
@@ -35,6 +36,7 @@ class _TourneezAppState extends ConsumerState<TourneezApp> {
     return MaterialApp.router(
       title: 'Tourneez',
       debugShowCheckedModeBanner: false,
+      scaffoldMessengerKey: tourneezMessengerKey,
       theme: TourneezTheme.light(),
       darkTheme: TourneezTheme.dark(),
       themeMode: themeMode,

@@ -4,6 +4,22 @@ import 'package:tourneez/data/logo_storage.dart';
 import 'package:tourneez/domain/models.dart';
 import 'package:tourneez/ui/theme.dart';
 
+/// App-level messenger so toasts from sheets/dialogs appear immediately.
+final tourneezMessengerKey = GlobalKey<ScaffoldMessengerState>();
+
+void showAppSnackBar(String message) {
+  final messenger = tourneezMessengerKey.currentState;
+  if (messenger == null) return;
+  messenger
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(milliseconds: 1800),
+      ),
+    );
+}
+
 class TeamLogo extends StatelessWidget {
   const TeamLogo({
     super.key,

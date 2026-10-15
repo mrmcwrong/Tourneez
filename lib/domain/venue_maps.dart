@@ -40,6 +40,49 @@ Future<bool> openVenueInMaps(Venue venue, {Venue? parent}) async {
   return launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
+/// Venue shown for a game: the match assignment, or the home team's venue.
+class ResolvedMatchVenue {
+  const ResolvedMatchVenue({
+    required this.venue,
+    required this.fromHomeTeam,
+    this.parent,
+  });
+
+  final Venue venue;
+  final Venue? parent;
+  final bool fromHomeTeam;
+
+  String get label => venueDisplayLabel(venue, parent: parent);
+  String? get address => venueEffectiveAddress(venue, parent: parent);
+  String? get layoutPath => venue.layoutImagePath ?? parent?.layoutImagePath;
+  String get locationText => venueLocationText(venue, parent: parent);
+}
+
+ResolvedMatchVenue? resolveMatchVenue({
+  required int? venueId,
+  int? homeVenueId,
+  required List<Venue> venues,
+}) {
+  final fromMatch = venueId != null;
+  final id = venueId ?? homeVenueId;
+  if (id == null) return null;
+  Venue? find(int target) {
+    for (final venue in venues) {
+      if (venue.id == target) return venue;
+    }
+    return null;
+  }
+
+  final venue = find(id);
+  if (venue == null) return null;
+  final parent = venue.parentVenueId == null ? null : find(venue.parentVenueId!);
+  return ResolvedMatchVenue(
+    venue: venue,
+    parent: parent,
+    fromHomeTeam: !fromMatch,
+  );
+}
+
 /// Free-text location synced onto matches when a venue is assigned.
 String venueLocationText(Venue venue, {Venue? parent}) {
   if (parent != null) {

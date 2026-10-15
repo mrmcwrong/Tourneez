@@ -5,6 +5,7 @@ import 'package:tourneez/data/logo_storage.dart';
 import 'package:tourneez/domain/models.dart';
 import 'package:tourneez/domain/venue_maps.dart';
 import 'package:tourneez/providers/providers.dart';
+import 'package:tourneez/providers/viewer_provider.dart';
 import 'package:tourneez/ui/venue_editor.dart';
 import 'package:tourneez/ui/widgets.dart';
 
@@ -14,6 +15,7 @@ class VenuesScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final venuesAsync = ref.watch(venuesProvider);
+    final manager = ref.watch(viewerProvider).isManager;
 
     return Scaffold(
       appBar: AppBar(
@@ -29,11 +31,13 @@ class VenuesScreen extends ConsumerWidget {
         ),
         title: const Text('Venues'),
       ),
-      floatingActionButton: FloatingActionButton(
-        tooltip: 'Add venue',
-        onPressed: () => showVenueEditorSheet(context, ref),
-        child: const Icon(Icons.add_location_alt_outlined),
-      ),
+      floatingActionButton: manager
+          ? FloatingActionButton(
+              tooltip: 'Add venue',
+              onPressed: () => showVenueEditorSheet(context, ref),
+              child: const Icon(Icons.add_location_alt_outlined),
+            )
+          : null,
       body: venuesAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => EmptyState(
@@ -55,11 +59,13 @@ class VenuesScreen extends ConsumerWidget {
               message:
                   'Add standalone grounds with addresses, or a complex with '
                   'Field 1 / Field 2 and an optional layout map.',
-              action: FilledButton.icon(
-                onPressed: () => showVenueEditorSheet(context, ref),
-                icon: const Icon(Icons.add),
-                label: const Text('Add venue'),
-              ),
+              action: manager
+                  ? FilledButton.icon(
+                      onPressed: () => showVenueEditorSheet(context, ref),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add venue'),
+                    )
+                  : null,
             );
           }
 
@@ -90,6 +96,7 @@ class _VenueCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
+    final manager = ref.watch(viewerProvider).isManager;
     final isComplex = fields.isNotEmpty || site.layoutImagePath != null;
 
     return Card(
@@ -163,16 +170,19 @@ class _VenueCard extends ConsumerWidget {
                 }
               },
               itemBuilder: (context) => [
-                const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                const PopupMenuItem(
-                  value: 'add_field',
-                  child: Text('Add field'),
-                ),
+                if (manager)
+                  const PopupMenuItem(value: 'edit', child: Text('Edit')),
+                if (manager)
+                  const PopupMenuItem(
+                    value: 'add_field',
+                    child: Text('Add field'),
+                  ),
                 const PopupMenuItem(
                   value: 'maps',
                   child: Text('Open in Maps'),
                 ),
-                const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                if (manager)
+                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
               ],
             ),
             onTap: () => _showDetail(context, ref, site, fields),
@@ -188,12 +198,15 @@ class _VenueCard extends ConsumerWidget {
               leading: const Icon(Icons.crop_square_outlined, size: 20),
               title: Text(field.name),
               subtitle: field.notes == null ? null : Text(field.notes!),
-              trailing: IconButton(
-                icon: const Icon(Icons.edit_outlined, size: 20),
-                onPressed: () =>
-                    showVenueEditorSheet(context, ref, venue: field),
-              ),
-              onLongPress: () async {
+              trailing: manager
+                  ? IconButton(
+                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      onPressed: () =>
+                          showVenueEditorSheet(context, ref, venue: field),
+                    )
+                  : null,
+              onLongPress: manager
+                  ? () async {
                 final ok = await showDialog<bool>(
                   context: context,
                   builder: (ctx) => AlertDialog(
@@ -214,7 +227,8 @@ class _VenueCard extends ConsumerWidget {
                 if (ok == true) {
                   await ref.read(repositoryProvider).deleteVenue(field.id);
                 }
-              },
+              }
+                  : null,
             ),
         ],
       ),
@@ -269,14 +283,15 @@ class _VenueCard extends ConsumerWidget {
                     icon: const Icon(Icons.map_outlined),
                     label: const Text('Open in Maps'),
                   ),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      showVenueEditorSheet(context, ref, venue: site);
-                    },
-                    icon: const Icon(Icons.edit_outlined),
-                    label: const Text('Edit'),
-                  ),
+                  if (ref.read(viewerProvider).isManager)
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        showVenueEditorSheet(context, ref, venue: site);
+                      },
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('Edit'),
+                    ),
                 ],
               ),
               if (site.layoutImagePath != null) ...[
@@ -343,6 +358,7 @@ class _LayoutImage extends StatelessWidget {
     return Image.memory(
       bytes,
       fit: fit,
+      cacheWidth: 900,
       filterQuality: FilterQuality.medium,
     );
   }

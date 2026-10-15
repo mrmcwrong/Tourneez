@@ -6,22 +6,18 @@ import 'package:tourneez/domain/models.dart';
 import 'package:tourneez/providers/providers.dart';
 import 'package:tourneez/ui/widgets.dart';
 
-/// Opens the venue editor. Returns the created or updated [Venue], or null if
-/// the sheet was dismissed without saving.
+/// Opens the venue editor as a full-screen page so it works on top of
+/// team sheets (stacked modal sheets are unreliable on Windows).
 Future<Venue?> showVenueEditorSheet(
   BuildContext context,
   WidgetRef ref, {
   Venue? venue,
   int? parentVenueId,
 }) {
-  return showModalBottomSheet<Venue?>(
-    context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    useRootNavigator: true,
-    builder: (ctx) => keyboardAware(
-      context: ctx,
-      child: _VenueEditorSheet(
+  return Navigator.of(context, rootNavigator: true).push<Venue?>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (ctx) => _VenueEditorPage(
         venue: venue,
         parentVenueId: parentVenueId,
       ),
@@ -29,17 +25,17 @@ Future<Venue?> showVenueEditorSheet(
   );
 }
 
-class _VenueEditorSheet extends ConsumerStatefulWidget {
-  const _VenueEditorSheet({this.venue, this.parentVenueId});
+class _VenueEditorPage extends ConsumerStatefulWidget {
+  const _VenueEditorPage({this.venue, this.parentVenueId});
 
   final Venue? venue;
   final int? parentVenueId;
 
   @override
-  ConsumerState<_VenueEditorSheet> createState() => _VenueEditorSheetState();
+  ConsumerState<_VenueEditorPage> createState() => _VenueEditorPageState();
 }
 
-class _VenueEditorSheetState extends ConsumerState<_VenueEditorSheet> {
+class _VenueEditorPageState extends ConsumerState<_VenueEditorPage> {
   late final TextEditingController _name;
   late final TextEditingController _address;
   late final TextEditingController _mapUrl;
@@ -74,7 +70,12 @@ class _VenueEditorSheetState extends ConsumerState<_VenueEditorSheet> {
 
   Future<void> _pickLayout() async {
     final picker = ImagePicker();
-    final file = await picker.pickImage(source: ImageSource.gallery);
+    final file = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 85,
+    );
     if (file == null) return;
     setState(() {
       _pickedLayoutSource = file.path;
@@ -115,12 +116,10 @@ class _VenueEditorSheetState extends ConsumerState<_VenueEditorSheet> {
         );
       }
       final saved = await repo.getVenue(id);
-      if (mounted) Navigator.pop(context, saved);
+      if (mounted) Navigator.of(context).pop(saved);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(friendlyErrorMessage(e))),
-      );
+      showAppSnackBar(friendlyErrorMessage(e));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -133,19 +132,37 @@ class _VenueEditorSheetState extends ConsumerState<_VenueEditorSheet> {
         ? (_isField ? 'Add field' : 'Add venue')
         : (_isField ? 'Edit field' : 'Edit venue');
 
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        0,
-        16,
-        16 + MediaQuery.viewInsetsOf(context).bottom,
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(title),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilledButton(
+              onPressed: _saving ? null : _save,
+              child: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Save'),
+            ),
+          ),
+        ],
       ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 6),
+      body: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            8,
+            16,
+            16 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
             Text(
               _isField
                   ? 'A named field at a complex (Field 1, Pitch A, …).'
@@ -240,7 +257,9 @@ class _VenueEditorSheetState extends ConsumerState<_VenueEditorSheet> {
               child: Text(_saving ? 'Saving…' : 'Save'),
             ),
             const SizedBox(height: 8),
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -265,6 +284,7 @@ class _LayoutPreview extends StatelessWidget {
           height: 140,
           width: double.infinity,
           fit: BoxFit.cover,
+          cacheWidth: 800,
           filterQuality: FilterQuality.medium,
         ),
       ),
@@ -276,130 +296,114 @@ Future<Object?> showVenuePickerSheet(
   BuildContext context,
   WidgetRef ref, {
   int? selectedId,
-}) async {
-  final venues = await ref.read(venuesProvider.future);
-  if (!context.mounted) return null;
-  return showModalBottomSheet<Object?>(
-    context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    useRootNavigator: true,
-    builder: (ctx) {
-      return _VenuePickerBody(
-        initialVenues: venues,
-        selectedId: selectedId,
-      );
-    },
+}) {
+  return Navigator.of(context, rootNavigator: true).push<Object?>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (ctx) => _VenuePickerPage(selectedId: selectedId),
+    ),
   );
 }
 
-class _VenuePickerBody extends ConsumerStatefulWidget {
-  const _VenuePickerBody({
-    required this.initialVenues,
-    required this.selectedId,
-  });
+class _VenuePickerPage extends ConsumerWidget {
+  const _VenuePickerPage({required this.selectedId});
 
-  final List<Venue> initialVenues;
   final int? selectedId;
 
-  @override
-  ConsumerState<_VenuePickerBody> createState() => _VenuePickerBodyState();
-}
-
-class _VenuePickerBodyState extends ConsumerState<_VenuePickerBody> {
-  Future<void> _createVenue() async {
+  Future<void> _createVenue(BuildContext context, WidgetRef ref) async {
     final created = await showVenueEditorSheet(context, ref);
-    if (!mounted || created == null) return;
-    Navigator.pop(context, created);
+    if (!context.mounted || created == null) return;
+    Navigator.of(context).pop(created);
   }
 
   @override
-  Widget build(BuildContext context) {
-    final top = widget.initialVenues.where((v) => v.isTopLevel).toList();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final venuesAsync = ref.watch(venuesProvider);
+    final venues = venuesAsync.value ?? const <Venue>[];
+    final top = venues.where((v) => v.isTopLevel).toList();
     final byParent = <int, List<Venue>>{};
-    for (final v in widget.initialVenues.where((v) => v.isField)) {
+    for (final v in venues.where((v) => v.isField)) {
       byParent.putIfAbsent(v.parentVenueId!, () => []).add(v);
     }
 
-    return SafeArea(
-      child: SizedBox(
-        height: MediaQuery.sizeOf(context).height * 0.7,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Choose venue',
-                          style: Theme.of(context).textTheme.titleLarge,
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Choose venue'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: FilledButton.tonalIcon(
+              onPressed: () => _createVenue(context, ref),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Create venue'),
+            ),
+          ),
+          Expanded(
+            child: venuesAsync.isLoading && venues.isEmpty
+                ? const Center(child: CircularProgressIndicator())
+                : top.isEmpty
+                    ? EmptyState(
+                        icon: Icons.place_outlined,
+                        title: 'No venues yet',
+                        message:
+                            'Create a venue here or from the Venues library.',
+                        action: FilledButton.icon(
+                          onPressed: () => _createVenue(context, ref),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Create venue'),
                         ),
+                      )
+                    : ListView.builder(
+                        itemCount: top.length,
+                        itemBuilder: (context, index) {
+                          final site = top[index];
+                          final fields =
+                              byParent[site.id] ?? const <Venue>[];
+                          return Column(
+                            children: [
+                              ListTile(
+                                leading: Icon(
+                                  fields.isNotEmpty
+                                      ? Icons.stadium_outlined
+                                      : Icons.place_outlined,
+                                ),
+                                title: Text(site.name),
+                                subtitle: site.address == null
+                                    ? null
+                                    : Text(site.address!),
+                                selected: selectedId == site.id,
+                                onTap: () =>
+                                    Navigator.of(context).pop(site),
+                              ),
+                              for (final field in fields)
+                                ListTile(
+                                  contentPadding: const EdgeInsets.only(
+                                    left: 40,
+                                    right: 16,
+                                  ),
+                                  leading: const Icon(
+                                    Icons.crop_square_outlined,
+                                  ),
+                                  title: Text(field.name),
+                                  subtitle: Text(site.name),
+                                  selected: selectedId == field.id,
+                                  onTap: () =>
+                                      Navigator.of(context).pop(field),
+                                ),
+                            ],
+                          );
+                        },
                       ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('Clear'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  FilledButton.tonalIcon(
-                    onPressed: _createVenue,
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Create venue'),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: top.isEmpty
-                  ? EmptyState(
-                      icon: Icons.place_outlined,
-                      title: 'No venues yet',
-                      message:
-                          'Create a venue here or from the Venues library.',
-                      action: FilledButton.icon(
-                        onPressed: _createVenue,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Create venue'),
-                      ),
-                    )
-                  : ListView(
-                      children: [
-                        for (final site in top) ...[
-                          ListTile(
-                            leading: Icon(
-                              byParent.containsKey(site.id)
-                                  ? Icons.stadium_outlined
-                                  : Icons.place_outlined,
-                            ),
-                            title: Text(site.name),
-                            subtitle: site.address == null
-                                ? null
-                                : Text(site.address!),
-                            selected: widget.selectedId == site.id,
-                            onTap: () => Navigator.pop(context, site),
-                          ),
-                          for (final field
-                              in byParent[site.id] ?? const <Venue>[])
-                            ListTile(
-                              contentPadding:
-                                  const EdgeInsets.only(left: 40, right: 16),
-                              leading: const Icon(Icons.crop_square_outlined),
-                              title: Text(field.name),
-                              subtitle: Text(site.name),
-                              selected: widget.selectedId == field.id,
-                              onTap: () => Navigator.pop(context, field),
-                            ),
-                        ],
-                      ],
-                    ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

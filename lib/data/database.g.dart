@@ -92,6 +92,21 @@ class $TeamsTableTable extends TeamsTable
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _showLogoCircleMeta = const VerificationMeta(
+    'showLogoCircle',
+  );
+  @override
+  late final GeneratedColumn<bool> showLogoCircle = GeneratedColumn<bool>(
+    'show_logo_circle',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("show_logo_circle" IN (0, 1))',
+    ),
+    defaultValue: const Constant(true),
+  );
   static const VerificationMeta _titlesWonMeta = const VerificationMeta(
     'titlesWon',
   );
@@ -232,6 +247,7 @@ class $TeamsTableTable extends TeamsTable
     powerRating,
     homeLocation,
     homeVenueId,
+    showLogoCircle,
     titlesWon,
     titlesJson,
     promotionsWon,
@@ -303,6 +319,15 @@ class $TeamsTableTable extends TeamsTable
         homeVenueId.isAcceptableOrUnknown(
           data['home_venue_id']!,
           _homeVenueIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('show_logo_circle')) {
+      context.handle(
+        _showLogoCircleMeta,
+        showLogoCircle.isAcceptableOrUnknown(
+          data['show_logo_circle']!,
+          _showLogoCircleMeta,
         ),
       );
     }
@@ -427,6 +452,10 @@ class $TeamsTableTable extends TeamsTable
         DriftSqlType.int,
         data['${effectivePrefix}home_venue_id'],
       ),
+      showLogoCircle: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}show_logo_circle'],
+      )!,
       titlesWon: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}titles_won'],
@@ -492,6 +521,9 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
 
   /// Soft FK to [VenuesTable] — optional home ground / field.
   final int? homeVenueId;
+
+  /// White disc behind the logo on the parent page. Off when it clashes.
+  final bool showLogoCircle;
   final int titlesWon;
 
   /// JSON array of title names, e.g. `["Premier League S1","Cup Final"]`.
@@ -513,6 +545,7 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
     required this.powerRating,
     this.homeLocation,
     this.homeVenueId,
+    required this.showLogoCircle,
     required this.titlesWon,
     required this.titlesJson,
     required this.promotionsWon,
@@ -541,6 +574,7 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
     if (!nullToAbsent || homeVenueId != null) {
       map['home_venue_id'] = Variable<int>(homeVenueId);
     }
+    map['show_logo_circle'] = Variable<bool>(showLogoCircle);
     map['titles_won'] = Variable<int>(titlesWon);
     map['titles_json'] = Variable<String>(titlesJson);
     map['promotions_won'] = Variable<int>(promotionsWon);
@@ -570,6 +604,7 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
       homeVenueId: homeVenueId == null && nullToAbsent
           ? const Value.absent()
           : Value(homeVenueId),
+      showLogoCircle: Value(showLogoCircle),
       titlesWon: Value(titlesWon),
       titlesJson: Value(titlesJson),
       promotionsWon: Value(promotionsWon),
@@ -597,6 +632,7 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
       powerRating: serializer.fromJson<int>(json['powerRating']),
       homeLocation: serializer.fromJson<String?>(json['homeLocation']),
       homeVenueId: serializer.fromJson<int?>(json['homeVenueId']),
+      showLogoCircle: serializer.fromJson<bool>(json['showLogoCircle']),
       titlesWon: serializer.fromJson<int>(json['titlesWon']),
       titlesJson: serializer.fromJson<String>(json['titlesJson']),
       promotionsWon: serializer.fromJson<int>(json['promotionsWon']),
@@ -621,6 +657,7 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
       'powerRating': serializer.toJson<int>(powerRating),
       'homeLocation': serializer.toJson<String?>(homeLocation),
       'homeVenueId': serializer.toJson<int?>(homeVenueId),
+      'showLogoCircle': serializer.toJson<bool>(showLogoCircle),
       'titlesWon': serializer.toJson<int>(titlesWon),
       'titlesJson': serializer.toJson<String>(titlesJson),
       'promotionsWon': serializer.toJson<int>(promotionsWon),
@@ -643,6 +680,7 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
     int? powerRating,
     Value<String?> homeLocation = const Value.absent(),
     Value<int?> homeVenueId = const Value.absent(),
+    bool? showLogoCircle,
     int? titlesWon,
     String? titlesJson,
     int? promotionsWon,
@@ -662,6 +700,7 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
     powerRating: powerRating ?? this.powerRating,
     homeLocation: homeLocation.present ? homeLocation.value : this.homeLocation,
     homeVenueId: homeVenueId.present ? homeVenueId.value : this.homeVenueId,
+    showLogoCircle: showLogoCircle ?? this.showLogoCircle,
     titlesWon: titlesWon ?? this.titlesWon,
     titlesJson: titlesJson ?? this.titlesJson,
     promotionsWon: promotionsWon ?? this.promotionsWon,
@@ -689,6 +728,9 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
       homeVenueId: data.homeVenueId.present
           ? data.homeVenueId.value
           : this.homeVenueId,
+      showLogoCircle: data.showLogoCircle.present
+          ? data.showLogoCircle.value
+          : this.showLogoCircle,
       titlesWon: data.titlesWon.present ? data.titlesWon.value : this.titlesWon,
       titlesJson: data.titlesJson.present
           ? data.titlesJson.value
@@ -729,6 +771,7 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
           ..write('powerRating: $powerRating, ')
           ..write('homeLocation: $homeLocation, ')
           ..write('homeVenueId: $homeVenueId, ')
+          ..write('showLogoCircle: $showLogoCircle, ')
           ..write('titlesWon: $titlesWon, ')
           ..write('titlesJson: $titlesJson, ')
           ..write('promotionsWon: $promotionsWon, ')
@@ -753,6 +796,7 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
     powerRating,
     homeLocation,
     homeVenueId,
+    showLogoCircle,
     titlesWon,
     titlesJson,
     promotionsWon,
@@ -776,6 +820,7 @@ class TeamsTableData extends DataClass implements Insertable<TeamsTableData> {
           other.powerRating == this.powerRating &&
           other.homeLocation == this.homeLocation &&
           other.homeVenueId == this.homeVenueId &&
+          other.showLogoCircle == this.showLogoCircle &&
           other.titlesWon == this.titlesWon &&
           other.titlesJson == this.titlesJson &&
           other.promotionsWon == this.promotionsWon &&
@@ -797,6 +842,7 @@ class TeamsTableCompanion extends UpdateCompanion<TeamsTableData> {
   final Value<int> powerRating;
   final Value<String?> homeLocation;
   final Value<int?> homeVenueId;
+  final Value<bool> showLogoCircle;
   final Value<int> titlesWon;
   final Value<String> titlesJson;
   final Value<int> promotionsWon;
@@ -816,6 +862,7 @@ class TeamsTableCompanion extends UpdateCompanion<TeamsTableData> {
     this.powerRating = const Value.absent(),
     this.homeLocation = const Value.absent(),
     this.homeVenueId = const Value.absent(),
+    this.showLogoCircle = const Value.absent(),
     this.titlesWon = const Value.absent(),
     this.titlesJson = const Value.absent(),
     this.promotionsWon = const Value.absent(),
@@ -836,6 +883,7 @@ class TeamsTableCompanion extends UpdateCompanion<TeamsTableData> {
     this.powerRating = const Value.absent(),
     this.homeLocation = const Value.absent(),
     this.homeVenueId = const Value.absent(),
+    this.showLogoCircle = const Value.absent(),
     this.titlesWon = const Value.absent(),
     this.titlesJson = const Value.absent(),
     this.promotionsWon = const Value.absent(),
@@ -856,6 +904,7 @@ class TeamsTableCompanion extends UpdateCompanion<TeamsTableData> {
     Expression<int>? powerRating,
     Expression<String>? homeLocation,
     Expression<int>? homeVenueId,
+    Expression<bool>? showLogoCircle,
     Expression<int>? titlesWon,
     Expression<String>? titlesJson,
     Expression<int>? promotionsWon,
@@ -876,6 +925,7 @@ class TeamsTableCompanion extends UpdateCompanion<TeamsTableData> {
       if (powerRating != null) 'power_rating': powerRating,
       if (homeLocation != null) 'home_location': homeLocation,
       if (homeVenueId != null) 'home_venue_id': homeVenueId,
+      if (showLogoCircle != null) 'show_logo_circle': showLogoCircle,
       if (titlesWon != null) 'titles_won': titlesWon,
       if (titlesJson != null) 'titles_json': titlesJson,
       if (promotionsWon != null) 'promotions_won': promotionsWon,
@@ -899,6 +949,7 @@ class TeamsTableCompanion extends UpdateCompanion<TeamsTableData> {
     Value<int>? powerRating,
     Value<String?>? homeLocation,
     Value<int?>? homeVenueId,
+    Value<bool>? showLogoCircle,
     Value<int>? titlesWon,
     Value<String>? titlesJson,
     Value<int>? promotionsWon,
@@ -919,6 +970,7 @@ class TeamsTableCompanion extends UpdateCompanion<TeamsTableData> {
       powerRating: powerRating ?? this.powerRating,
       homeLocation: homeLocation ?? this.homeLocation,
       homeVenueId: homeVenueId ?? this.homeVenueId,
+      showLogoCircle: showLogoCircle ?? this.showLogoCircle,
       titlesWon: titlesWon ?? this.titlesWon,
       titlesJson: titlesJson ?? this.titlesJson,
       promotionsWon: promotionsWon ?? this.promotionsWon,
@@ -956,6 +1008,9 @@ class TeamsTableCompanion extends UpdateCompanion<TeamsTableData> {
     }
     if (homeVenueId.present) {
       map['home_venue_id'] = Variable<int>(homeVenueId.value);
+    }
+    if (showLogoCircle.present) {
+      map['show_logo_circle'] = Variable<bool>(showLogoCircle.value);
     }
     if (titlesWon.present) {
       map['titles_won'] = Variable<int>(titlesWon.value);
@@ -1003,6 +1058,7 @@ class TeamsTableCompanion extends UpdateCompanion<TeamsTableData> {
           ..write('powerRating: $powerRating, ')
           ..write('homeLocation: $homeLocation, ')
           ..write('homeVenueId: $homeVenueId, ')
+          ..write('showLogoCircle: $showLogoCircle, ')
           ..write('titlesWon: $titlesWon, ')
           ..write('titlesJson: $titlesJson, ')
           ..write('promotionsWon: $promotionsWon, ')
@@ -5575,6 +5631,7 @@ typedef $$TeamsTableTableCreateCompanionBuilder =
       Value<int> powerRating,
       Value<String?> homeLocation,
       Value<int?> homeVenueId,
+      Value<bool> showLogoCircle,
       Value<int> titlesWon,
       Value<String> titlesJson,
       Value<int> promotionsWon,
@@ -5596,6 +5653,7 @@ typedef $$TeamsTableTableUpdateCompanionBuilder =
       Value<int> powerRating,
       Value<String?> homeLocation,
       Value<int?> homeVenueId,
+      Value<bool> showLogoCircle,
       Value<int> titlesWon,
       Value<String> titlesJson,
       Value<int> promotionsWon,
@@ -5729,6 +5787,11 @@ class $$TeamsTableTableFilterComposer
 
   ColumnFilters<int> get homeVenueId => $composableBuilder(
     column: $table.homeVenueId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get showLogoCircle => $composableBuilder(
+    column: $table.showLogoCircle,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5907,6 +5970,11 @@ class $$TeamsTableTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get showLogoCircle => $composableBuilder(
+    column: $table.showLogoCircle,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get titlesWon => $composableBuilder(
     column: $table.titlesWon,
     builder: (column) => ColumnOrderings(column),
@@ -5996,6 +6064,11 @@ class $$TeamsTableTableAnnotationComposer
 
   GeneratedColumn<int> get homeVenueId => $composableBuilder(
     column: $table.homeVenueId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get showLogoCircle => $composableBuilder(
+    column: $table.showLogoCircle,
     builder: (column) => column,
   );
 
@@ -6166,6 +6239,7 @@ class $$TeamsTableTableTableManager
                 Value<int> powerRating = const Value.absent(),
                 Value<String?> homeLocation = const Value.absent(),
                 Value<int?> homeVenueId = const Value.absent(),
+                Value<bool> showLogoCircle = const Value.absent(),
                 Value<int> titlesWon = const Value.absent(),
                 Value<String> titlesJson = const Value.absent(),
                 Value<int> promotionsWon = const Value.absent(),
@@ -6185,6 +6259,7 @@ class $$TeamsTableTableTableManager
                 powerRating: powerRating,
                 homeLocation: homeLocation,
                 homeVenueId: homeVenueId,
+                showLogoCircle: showLogoCircle,
                 titlesWon: titlesWon,
                 titlesJson: titlesJson,
                 promotionsWon: promotionsWon,
@@ -6206,6 +6281,7 @@ class $$TeamsTableTableTableManager
                 Value<int> powerRating = const Value.absent(),
                 Value<String?> homeLocation = const Value.absent(),
                 Value<int?> homeVenueId = const Value.absent(),
+                Value<bool> showLogoCircle = const Value.absent(),
                 Value<int> titlesWon = const Value.absent(),
                 Value<String> titlesJson = const Value.absent(),
                 Value<int> promotionsWon = const Value.absent(),
@@ -6225,6 +6301,7 @@ class $$TeamsTableTableTableManager
                 powerRating: powerRating,
                 homeLocation: homeLocation,
                 homeVenueId: homeVenueId,
+                showLogoCircle: showLogoCircle,
                 titlesWon: titlesWon,
                 titlesJson: titlesJson,
                 promotionsWon: promotionsWon,

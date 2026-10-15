@@ -1,5 +1,4 @@
-import 'package:collection/collection.dart';
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:tourneez/data/logo_storage.dart';
@@ -7,18 +6,20 @@ import 'package:tourneez/domain/match_odds.dart';
 import 'package:tourneez/domain/models.dart';
 import 'package:tourneez/domain/venue_maps.dart';
 import 'package:tourneez/providers/providers.dart';
+import 'package:tourneez/ui/hsv_color_picker.dart';
 import 'package:tourneez/ui/venue_editor.dart';
 import 'package:tourneez/ui/widgets.dart';
 
-Future<void> showTeamEditorSheet(
+Future<Team?> showTeamEditorSheet(
   BuildContext context,
   WidgetRef ref, {
   Team? team,
 }) {
-  return showModalBottomSheet<void>(
+  return showModalBottomSheet<Team?>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
+    useRootNavigator: true,
     builder: (ctx) => TeamEditorSheet(team: team),
   );
 }
@@ -38,6 +39,7 @@ class _TeamEditorSheetState extends ConsumerState<TeamEditorSheet> {
   bool _clearLogo = false;
   bool _saving = false;
   late int _colorArgb;
+  late bool _showLogoCircle;
   late double _power;
   int? _homeVenueId;
   String? _homeVenueLabel;
@@ -47,6 +49,7 @@ class _TeamEditorSheetState extends ConsumerState<TeamEditorSheet> {
     super.initState();
     _name = TextEditingController(text: widget.team?.name ?? '');
     _colorArgb = widget.team?.colorArgb ?? presetTeamColors.first;
+    _showLogoCircle = widget.team?.showLogoCircle ?? true;
     _power = (widget.team?.powerRating ?? 50).toDouble();
     _homeVenueId = widget.team?.homeVenueId;
     _homeVenueLabel = widget.team?.homeLocation;
@@ -106,10 +109,10 @@ class _TeamEditorSheetState extends ConsumerState<TeamEditorSheet> {
   }
 
   Future<void> _applyHomeVenue(Venue venue) async {
-    final venues = await ref.read(venuesProvider.future);
-    final parent = venue.parentVenueId == null
-        ? null
-        : venues.where((v) => v.id == venue.parentVenueId).firstOrNull;
+    Venue? parent;
+    if (venue.parentVenueId != null) {
+      parent = await ref.read(repositoryProvider).getVenue(venue.parentVenueId!);
+    }
     if (!mounted) return;
     setState(() {
       _homeVenueId = venue.id;
@@ -123,17 +126,20 @@ class _TeamEditorSheetState extends ConsumerState<TeamEditorSheet> {
     setState(() => _saving = true);
     final repo = ref.read(repositoryProvider);
     try {
+      final int id;
       if (widget.team == null) {
-        await repo.createTeam(
+        id = await repo.createTeam(
           name: name,
           sourceLogoPath: _pickedPath,
           colorArgb: _colorArgb,
           powerRating: _power.round(),
           homeVenueId: _homeVenueId,
+          showLogoCircle: _showLogoCircle,
         );
       } else {
+        id = widget.team!.id;
         await repo.updateTeam(
-          id: widget.team!.id,
+          id: id,
           name: name,
           sourceLogoPath: _pickedPath,
           clearLogo: _clearLogo,
@@ -141,9 +147,11 @@ class _TeamEditorSheetState extends ConsumerState<TeamEditorSheet> {
           powerRating: _power.round(),
           homeVenueId: _homeVenueId,
           clearHomeVenue: _homeVenueId == null,
+          showLogoCircle: _showLogoCircle,
         );
       }
-      if (mounted) Navigator.pop(context);
+      final saved = await repo.getTeam(id);
+      if (mounted) Navigator.pop(context, saved);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -236,12 +244,26 @@ class _TeamEditorSheetState extends ConsumerState<TeamEditorSheet> {
                 onTap: _pickLogo,
                 child: Stack(
                   children: [
-                    TeamLogo(
-                      path: previewPath,
-                      name: _name.text.isEmpty ? 'T' : _name.text,
-                      colorArgb: _colorArgb,
-                      size: 140,
-                    ),
+                    _showLogoCircle
+                        ? Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.92),
+                              shape: BoxShape.circle,
+                            ),
+                            child: TeamLogo(
+                              path: previewPath,
+                              name: _name.text.isEmpty ? 'T' : _name.text,
+                              colorArgb: _colorArgb,
+                              size: 112,
+                            ),
+                          )
+                        : TeamLogo(
+                            path: previewPath,
+                            name: _name.text.isEmpty ? 'T' : _name.text,
+                            colorArgb: _colorArgb,
+                            size: 140,
+                          ),
                     Positioned(
                       right: 0,
                       bottom: 0,
@@ -258,6 +280,16 @@ class _TeamEditorSheetState extends ConsumerState<TeamEditorSheet> {
                   ],
                 ),
               ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Background circle'),
+              subtitle: const Text(
+                'White disc behind the logo on the parent page. '
+                'Turn off when it clashes with the logo.',
+              ),
+              value: _showLogoCircle,
+              onChanged: (v) => setState(() => _showLogoCircle = v),
             ),
             if (previewPath != null)
               TextButton(
@@ -283,7 +315,7 @@ class _TeamEditorSheetState extends ConsumerState<TeamEditorSheet> {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.place_outlined),
               title: const Text('Home venue'),
-              subtitle: Text(_homeVenueLabel ?? 'None — optional'),
+              subtitle: Text(_homeVenueLabel ?? 'None â€” optional'),
               trailing: const Icon(Icons.chevron_right),
               onTap: _pickHomeVenue,
             ),
@@ -304,34 +336,9 @@ class _TeamEditorSheetState extends ConsumerState<TeamEditorSheet> {
               ),
             ),
             const SizedBox(height: 16),
-            Text('Team color', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final swatch in presetTeamColorSwatches)
-                  GestureDetector(
-                    onTap: () => setState(() => _colorArgb = swatch.argb),
-                    child: Tooltip(
-                      message: swatch.label,
-                      child: Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: Color(swatch.argb),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: _colorArgb == swatch.argb
-                                ? Theme.of(context).colorScheme.onSurface
-                                : Colors.transparent,
-                            width: 2.5,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
+            HsvColorPicker(
+              colorArgb: _colorArgb,
+              onChanged: (argb) => setState(() => _colorArgb = argb),
             ),
             const SizedBox(height: 16),
             Row(

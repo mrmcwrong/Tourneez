@@ -6,12 +6,25 @@ const defaultMatchDurationMinutes = 90;
 
 /// Human-readable kickoff, e.g. `Sat, Sep 20 · 9:00 AM`.
 String formatMatchKickoff(DateTime when) {
-  return DateFormat('EEE, MMM d · h:mm a').format(when.toLocal());
+  final local = when.toLocal();
+  try {
+    return DateFormat('EEE, MMM d · h:mm a').format(local);
+  } catch (_) {
+    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final minute = local.minute.toString().padLeft(2, '0');
+    final suffix = local.hour < 12 ? 'AM' : 'PM';
+    return '${local.month}/${local.day} · $hour:$minute $suffix';
+  }
 }
 
 /// Compact day header for schedule lists, e.g. `Saturday, Sep 20`.
 String formatScheduleDay(DateTime day) {
-  return DateFormat('EEEE, MMM d').format(day.toLocal());
+  final local = day.toLocal();
+  try {
+    return DateFormat('EEEE, MMM d').format(local);
+  } catch (_) {
+    return '${local.month}/${local.day}/${local.year}';
+  }
 }
 
 DateTime matchEndTime(Match match) {

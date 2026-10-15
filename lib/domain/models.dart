@@ -201,6 +201,7 @@ class TournamentConfig {
     this.knockoutSeriesLength = 1,
     this.finalSeriesEnabled = true,
     this.finalSeriesLength = 1,
+    this.familyView = FamilyViewSettings.defaults,
   });
 
   static const seriesLengthChoices = <int>[1, 2, 3, 5, 7];
@@ -255,6 +256,9 @@ class TournamentConfig {
   /// Series length for the final (same allowed values as knockout).
   final int finalSeriesLength;
 
+  /// What the coach/parent view of this league or standalone event may show.
+  final FamilyViewSettings familyView;
+
   static int _normalizeSeriesLength(int value) {
     if (seriesLengthChoices.contains(value)) return value;
     return 1;
@@ -269,6 +273,11 @@ class TournamentConfig {
     String? groupLabel,
     int? winnerAdvancesTo,
   }) {
+    if (stage == MatchStage.group ||
+        stage == MatchStage.roundRobin ||
+        stage == MatchStage.swiss) {
+      return 1;
+    }
     final isThird = groupLabel == '3rd Place';
     final isFinal = stage == MatchStage.grandFinal ||
         (!isThird &&
@@ -299,6 +308,7 @@ class TournamentConfig {
     'knockoutSeriesLength': knockoutSeriesLength,
     'finalSeriesEnabled': finalSeriesEnabled,
     'finalSeriesLength': finalSeriesLength,
+    'familyView': familyView.toJson(),
   };
 
   factory TournamentConfig.fromJson(Map<String, dynamic> json) {
@@ -360,6 +370,7 @@ class TournamentConfig {
       finalSeriesLength: _normalizeSeriesLength(
         json['finalSeriesLength'] as int? ?? 1,
       ),
+      familyView: FamilyViewSettings.fromJson(json['familyView']),
     );
   }
 
@@ -380,6 +391,7 @@ class TournamentConfig {
     int? knockoutSeriesLength,
     bool? finalSeriesEnabled,
     int? finalSeriesLength,
+    FamilyViewSettings? familyView,
   }) {
     return TournamentConfig(
       pointsForWin: pointsForWin ?? this.pointsForWin,
@@ -401,6 +413,94 @@ class TournamentConfig {
       finalSeriesLength: finalSeriesLength != null
           ? _normalizeSeriesLength(finalSeriesLength)
           : this.finalSeriesLength,
+      familyView: familyView ?? this.familyView,
+    );
+  }
+}
+
+/// Coach/parent visibility for a league (or a standalone tournament).
+///
+/// Stored inside [TournamentConfig] JSON so backups keep it without a schema bump.
+class FamilyViewSettings {
+  const FamilyViewSettings({
+    this.showSchedule = true,
+    this.showScores = true,
+    this.showStandings = true,
+    this.showVenues = true,
+    this.showPower = false,
+  });
+
+  static const defaults = FamilyViewSettings();
+
+  final bool showSchedule;
+  final bool showScores;
+  final bool showStandings;
+  final bool showVenues;
+  final bool showPower;
+
+  FamilyViewSettings copyWith({
+    bool? showSchedule,
+    bool? showScores,
+    bool? showStandings,
+    bool? showVenues,
+    bool? showPower,
+  }) {
+    return FamilyViewSettings(
+      showSchedule: showSchedule ?? this.showSchedule,
+      showScores: showScores ?? this.showScores,
+      showStandings: showStandings ?? this.showStandings,
+      showVenues: showVenues ?? this.showVenues,
+      showPower: showPower ?? this.showPower,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'showSchedule': showSchedule,
+    'showScores': showScores,
+    'showStandings': showStandings,
+    'showVenues': showVenues,
+    'showPower': showPower,
+  };
+
+  factory FamilyViewSettings.fromJson(Object? raw) {
+    if (raw is! Map) return defaults;
+    bool flag(String key, {required bool fallback}) {
+      final value = raw[key];
+      return value is bool ? value : fallback;
+    }
+
+    return FamilyViewSettings(
+      showSchedule: flag('showSchedule', fallback: true),
+      showScores: flag('showScores', fallback: true),
+      showStandings: flag('showStandings', fallback: true),
+      showVenues: flag('showVenues', fallback: true),
+      showPower: flag('showPower', fallback: false),
+    );
+  }
+}
+
+enum AppRole { manager, family }
+
+class ViewerSettings {
+  const ViewerSettings({
+    this.role = AppRole.manager,
+    this.familyTeamId,
+  });
+
+  final AppRole role;
+  final int? familyTeamId;
+
+  bool get isManager => role == AppRole.manager;
+  bool get isFamily => role == AppRole.family;
+
+  ViewerSettings copyWith({
+    AppRole? role,
+    int? familyTeamId,
+    bool clearFamilyTeam = false,
+  }) {
+    return ViewerSettings(
+      role: role ?? this.role,
+      familyTeamId: clearFamilyTeam ? null : (familyTeamId ?? this.familyTeamId),
     );
   }
 }
@@ -414,6 +514,7 @@ class Team {
     this.powerRating = 50,
     this.homeLocation,
     this.homeVenueId,
+    this.showLogoCircle = true,
     this.titles = const [],
     this.promotionsWon = 0,
     this.relegations = 0,
@@ -437,6 +538,9 @@ class Team {
 
   /// Soft FK to a [Venue]; null when the team has no home ground.
   final int? homeVenueId;
+
+  /// White disc behind the logo on the parent page.
+  final bool showLogoCircle;
 
   /// Specific tournament/league titles won (newest last).
   final List<String> titles;

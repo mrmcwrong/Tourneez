@@ -50,6 +50,7 @@ class TourneezRepository {
     int? colorArgb,
     int? powerRating,
     int? homeVenueId,
+    bool showLogoCircle = true,
   }) async {
     String? logoPath;
     if (sourceLogoPath != null) {
@@ -62,11 +63,8 @@ class TourneezRepository {
     String? homeLocation;
     int? resolvedVenueId;
     if (homeVenueId != null) {
-      final loc = await _locationTextForVenue(homeVenueId);
-      if (loc != null) {
-        resolvedVenueId = homeVenueId;
-        homeLocation = loc;
-      }
+      resolvedVenueId = homeVenueId;
+      homeLocation = await _locationTextForVenue(homeVenueId);
     }
     return _db
         .into(_db.teamsTable)
@@ -78,6 +76,7 @@ class TourneezRepository {
             powerRating: Value((powerRating ?? 50).clamp(1, 100)),
             homeLocation: Value(homeLocation),
             homeVenueId: Value(resolvedVenueId),
+            showLogoCircle: Value(showLogoCircle),
           ),
         );
   }
@@ -347,6 +346,7 @@ class TourneezRepository {
     int? powerRating,
     int? homeVenueId,
     bool clearHomeVenue = false,
+    bool? showLogoCircle,
   }) async {
     String? logoPath;
     if (clearLogo) {
@@ -383,6 +383,9 @@ class TourneezRepository {
             : const Value.absent(),
         homeVenueId: nextVenueId,
         homeLocation: nextHomeLocation,
+        showLogoCircle: showLogoCircle == null
+            ? const Value.absent()
+            : Value(showLogoCircle),
       ),
     );
   }
@@ -679,6 +682,19 @@ class TourneezRepository {
       final team = row.readTable(_db.teamsTable);
       return tournamentTeamFromRow(tt, team: teamFromRow(team));
     }).toList();
+  }
+
+  /// Every event this library team is enrolled in, including league seasons.
+  Future<List<Tournament>> getTournamentsForTeam(int teamId) async {
+    final links = await (_db.select(_db.tournamentTeamsTable)
+          ..where((t) => t.teamId.equals(teamId)))
+        .get();
+    if (links.isEmpty) return const [];
+    final ids = links.map((l) => l.tournamentId).toSet().toList();
+    final rows = await (_db.select(_db.tournamentsTable)
+          ..where((t) => t.id.isIn(ids)))
+        .get();
+    return rows.map(tournamentFromRow).toList();
   }
 
   Stream<List<Match>> watchMatches(int tournamentId) {
@@ -1530,6 +1546,61 @@ class TourneezRepository {
     await _propagateBracket(row.tournamentId);
     await _maybeGenerateNext(row.tournamentId);
     await _maybeCompleteTournament(row.tournamentId);
+    return null;
+  }
+
+  /// Remove a recorded result so the match is unplayed again.
+  Future<String?> clearMatchResult(int matchId) async {
+    final row = await (_db.select(
+      _db.matchesTable,
+    )..where((m) => m.id.equals(matchId))).getSingleOrNull();
+    if (row == null) return 'Match not found.';
+    if (row.status == MatchStatus.bye.name) return 'Cannot clear a bye.';
+    if (row.status != MatchStatus.completed.name && row.homeScore == null) {
+      return 'This game has no result.';
+    }
+
+    final tournament = await getTournament(row.tournamentId);
+    if (tournament == null) return 'Tournament not found.';
+    if (tournament.status == TournamentStatus.draft) {
+      return 'This tournament has not started yet.';
+    }
+
+    final teams = await getTournamentTeams(row.tournamentId);
+    final matches = await getMatches(row.tournamentId);
+    if (tournament.status == TournamentStatus.completed) {
+      await _reverseCompletionCareer(tournament, teams, matches);
+    }
+
+    String? seriesJson = row.seriesJson;
+    final series = SeriesScore.tryParse(row.seriesJson);
+    if (series != null) {
+      seriesJson = SeriesScore.empty(series.length).encode();
+    }
+
+    await (_db.update(_db.matchesTable)..where((m) => m.id.equals(matchId)))
+        .write(
+      MatchesTableCompanion(
+        homeScore: const Value(null),
+        awayScore: const Value(null),
+        status: const Value('pending'),
+        seriesJson: Value(seriesJson),
+      ),
+    );
+
+    await (_db.update(_db.tournamentsTable)
+          ..where((t) => t.id.equals(row.tournamentId)))
+        .write(
+      TournamentsTableCompanion(
+        status: Value(TournamentStatus.active.name),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+
+    if (tournament.format.hasBracketView) {
+      await _resetDownstreamBracket(row.tournamentId, matchId);
+      await _propagateBracket(row.tournamentId);
+    }
     return null;
   }
 
@@ -2770,6 +2841,12 @@ class TourneezRepository {
         layoutImagePath: setLayout ? Value(layout) : const Value.absent(),
       ),
     );
+
+    final loc = await _locationTextForVenue(id);
+    await (_db.update(_db.teamsTable)..where((t) => t.homeVenueId.equals(id)))
+        .write(TeamsTableCompanion(homeLocation: Value(loc)));
+    await (_db.update(_db.matchesTable)..where((m) => m.venueId.equals(id)))
+        .write(MatchesTableCompanion(location: Value(loc)));
   }
 
   Future<void> deleteVenue(int id) async {
@@ -2809,9 +2886,27 @@ class TourneezRepository {
     final matches = await (_db.select(_db.matchesTable)
           ..where((m) => m.tournamentId.isIn(tournamentIds)))
         .get();
-    final ids = {
+    final homeIds = {
       for (final m in matches)
-        if (m.venueId != null) m.venueId!,
+        if (m.venueId == null && m.homeTeamId != null) m.homeTeamId!,
+    };
+    final homeVenueByTeam = <int, int>{};
+    if (homeIds.isNotEmpty) {
+      final teams = await (_db.select(_db.teamsTable)
+            ..where((t) => t.id.isIn(homeIds.toList())))
+          .get();
+      for (final team in teams) {
+        final homeVenue = team.homeVenueId;
+        if (homeVenue != null) homeVenueByTeam[team.id] = homeVenue;
+      }
+    }
+    final ids = <int>{
+      for (final m in matches)
+        if (m.venueId != null)
+          m.venueId!
+        else if (m.homeTeamId != null &&
+            homeVenueByTeam[m.homeTeamId!] != null)
+          homeVenueByTeam[m.homeTeamId!]!,
     };
     if (ids.isEmpty) return const [];
     final rows = await (_db.select(_db.venuesTable)

@@ -387,6 +387,14 @@ void main() {
         noFinalSeries.seriesLengthForMatch(stage: MatchStage.grandFinal),
         1,
       );
+      expect(
+        config.seriesLengthForMatch(stage: MatchStage.roundRobin),
+        1,
+      );
+      expect(
+        config.seriesLengthForMatch(stage: MatchStage.group),
+        1,
+      );
     });
   });
 }

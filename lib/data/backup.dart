@@ -234,6 +234,8 @@ void _validateTeams(List<Map<String, dynamic>> rows) {
     row['logoPath'] = _sanitizeLogoPath(row['logoPath']);
     row['homeLocation'] = _sanitizeOptionalText(row['homeLocation']);
     row['homeVenueId'] = _readInt(row['homeVenueId']);
+    final circle = row['showLogoCircle'];
+    row['showLogoCircle'] = circle == null || circle == true || circle == 1;
     row['powerRating'] = _clampInt(row['powerRating'], 1, 100, fallback: 50);
     row['colorArgb'] = _asInt(row['colorArgb'], fallback: 0xFF0B6E4F);
     row['titlesWon'] = _nonNegInt(row['titlesWon']);

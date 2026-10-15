@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:tourneez/domain/models.dart';
 import 'package:tourneez/domain/schedule_format.dart';
 import 'package:tourneez/providers/providers.dart';
+import 'package:tourneez/providers/viewer_provider.dart';
 import 'package:tourneez/ui/theme.dart';
 import 'package:tourneez/ui/venue_overview.dart';
 import 'package:tourneez/ui/widgets.dart';
@@ -85,8 +86,10 @@ class _TournamentScheduleTabState extends ConsumerState<TournamentScheduleTab> {
       if (match.homeTeamId != tid && match.awayTeamId != tid) return false;
     }
 
-    if (_venueFilterId != null && match.venueId != _venueFilterId) {
-      return false;
+    if (_venueFilterId != null) {
+      final effective =
+          match.venueId ?? teamsById[match.homeTeamId]?.homeVenueId;
+      if (effective != _venueFilterId) return false;
     }
 
     if (_dateFilter != null) {
@@ -112,6 +115,10 @@ class _TournamentScheduleTabState extends ConsumerState<TournamentScheduleTab> {
 
     final matchesAsync = ref.watch(matchesProvider(tournament.id));
     final teamsAsync = ref.watch(tournamentTeamsProvider(tournament.id));
+    final manager = ref.watch(viewerProvider).isManager;
+    final focusTeamId =
+        manager ? null : ref.watch(viewerProvider).familyTeamId;
+    final familyView = ref.watch(familyViewForTournamentProvider(tournament.id));
 
     return matchesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -136,14 +143,6 @@ class _TournamentScheduleTabState extends ConsumerState<TournamentScheduleTab> {
                 return a.id.compareTo(b.id);
               });
 
-        final byDay = <DateTime, List<Match>>{};
-        for (final m in scheduled) {
-          final local = m.scheduledAt!.toLocal();
-          final day = DateTime(local.year, local.month, local.day);
-          byDay.putIfAbsent(day, () => []).add(m);
-        }
-        final days = byDay.keys.toList()..sort();
-
         final teamOptions = teamsById.values.toList()
           ..sort(
             (a, b) => a.displayName.toLowerCase().compareTo(
@@ -153,22 +152,54 @@ class _TournamentScheduleTabState extends ConsumerState<TournamentScheduleTab> {
 
         // Build a flat item list for ListView.builder.
         final items = <_ScheduleListItem>[];
-        if (scheduled.isEmpty && unscheduled.isNotEmpty) {
+        void addGroup(
+          List<Match> groupScheduled,
+          List<Match> groupUnscheduled, {
+          String? banner,
+        }) {
+          if (groupScheduled.isEmpty && groupUnscheduled.isEmpty) return;
+          if (banner != null) items.add(_ScheduleListItem.header(banner));
+          final grouped = <DateTime, List<Match>>{};
+          for (final m in groupScheduled) {
+            final local = m.scheduledAt!.toLocal();
+            final day = DateTime(local.year, local.month, local.day);
+            grouped.putIfAbsent(day, () => []).add(m);
+          }
+          final groupDays = grouped.keys.toList()..sort();
+          for (final day in groupDays) {
+            items.add(_ScheduleListItem.header(formatScheduleDay(day)));
+            for (final match in grouped[day]!) {
+              items.add(_ScheduleListItem.match(match));
+            }
+          }
+          if (groupUnscheduled.isNotEmpty) {
+            items.add(
+              _ScheduleListItem.header(
+                'Unscheduled (${groupUnscheduled.length})',
+              ),
+            );
+            for (final match in groupUnscheduled) {
+              items.add(_ScheduleListItem.match(match));
+            }
+          }
+        }
+
+        if (scheduled.isEmpty && unscheduled.isNotEmpty && manager) {
           items.add(const _ScheduleListItem.hint());
         }
-        for (final day in days) {
-          items.add(_ScheduleListItem.header(formatScheduleDay(day)));
-          for (final match in byDay[day]!) {
-            items.add(_ScheduleListItem.match(match));
-          }
-        }
-        if (unscheduled.isNotEmpty) {
-          items.add(
-            _ScheduleListItem.header('Unscheduled (${unscheduled.length})'),
+        if (focusTeamId == null) {
+          addGroup(scheduled, unscheduled);
+        } else {
+          bool mine(Match m) =>
+              m.homeTeamId == focusTeamId || m.awayTeamId == focusTeamId;
+          final yourScheduled = scheduled.where(mine).toList();
+          final yourUnscheduled = unscheduled.where(mine).toList();
+          addGroup(yourScheduled, yourUnscheduled, banner: 'Your games');
+          addGroup(
+            scheduled.where((m) => !mine(m)).toList(),
+            unscheduled.where((m) => !mine(m)).toList(),
+            banner: 'Other games',
           );
-          for (final match in unscheduled) {
-            items.add(_ScheduleListItem.match(match));
-          }
         }
 
         final allScheduled =
@@ -182,13 +213,14 @@ class _TournamentScheduleTabState extends ConsumerState<TournamentScheduleTab> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  FilledButton.tonalIcon(
-                    onPressed: playable.isEmpty
-                        ? null
-                        : () => _bulkAssign(context, playable),
-                    icon: const Icon(Icons.schedule, size: 18),
-                    label: const Text('Schedule'),
-                  ),
+                  if (manager)
+                    FilledButton.tonalIcon(
+                      onPressed: playable.isEmpty
+                          ? null
+                          : () => _bulkAssign(context, playable),
+                      icon: const Icon(Icons.schedule, size: 18),
+                      label: const Text('Schedule'),
+                    ),
                   OutlinedButton.icon(
                     onPressed: allScheduled.isEmpty
                         ? null
@@ -201,6 +233,7 @@ class _TournamentScheduleTabState extends ConsumerState<TournamentScheduleTab> {
                     icon: const Icon(Icons.calendar_month_outlined, size: 18),
                     label: const Text('Export calendar'),
                   ),
+                  if (manager || familyView.showVenues)
                   OutlinedButton.icon(
                     onPressed: () => showVenueOverviewSheet(
                       context,
@@ -357,14 +390,14 @@ class _TournamentScheduleTabState extends ConsumerState<TournamentScheduleTab> {
                                       ? null
                                       : teamsById[match.awayTeamId!],
                                   onTap: () => widget.onEditMatch(
-                                    match,
-                                    match.homeTeamId == null
-                                        ? null
-                                        : teamsById[match.homeTeamId!],
-                                    match.awayTeamId == null
-                                        ? null
-                                        : teamsById[match.awayTeamId!],
-                                  ),
+                                        match,
+                                        match.homeTeamId == null
+                                            ? null
+                                            : teamsById[match.homeTeamId!],
+                                        match.awayTeamId == null
+                                            ? null
+                                            : teamsById[match.awayTeamId!],
+                                      ),
                                 );
                             }
                           },
@@ -410,9 +443,14 @@ class _TournamentScheduleTabState extends ConsumerState<TournamentScheduleTab> {
     final venues = await ref.read(venuesProvider.future);
     if (!mounted) return;
     final byId = {for (final v in venues) v.id: v};
+    final teams =
+        ref.read(tournamentTeamsProvider(widget.tournament.id)).asData?.value ??
+            const <TournamentTeam>[];
+    final byTeam = {for (final t in teams) t.teamId: t};
     final usedIds = {
       for (final m in playable)
-        if (m.venueId != null) m.venueId!,
+        if ((m.venueId ?? byTeam[m.homeTeamId]?.homeVenueId) != null)
+          m.venueId ?? byTeam[m.homeTeamId]!.homeVenueId!,
     };
     final options = usedIds.map((id) => byId[id]).whereType<Venue>().toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -668,6 +706,8 @@ class _TournamentScheduleTabState extends ConsumerState<TournamentScheduleTab> {
     gapCtrl.dispose();
     if (ok != true || !context.mounted) return;
 
+    showAppSnackBar('Scheduling…');
+
     final firstKickoff = DateTime(
       date.year,
       date.month,
@@ -702,9 +742,7 @@ class _TournamentScheduleTabState extends ConsumerState<TournamentScheduleTab> {
       success = 'Round $selectedRound scheduled';
     }
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(err ?? success)),
-    );
+    showAppSnackBar(err ?? success);
   }
 
   Future<void> _exportIcs(
@@ -811,23 +849,25 @@ class _ScheduleMatchTile extends StatelessWidget {
     required this.match,
     required this.home,
     required this.away,
-    required this.onTap,
+    this.onTap,
   });
 
   final Match match;
   final TournamentTeam? home;
   final TournamentTeam? away;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final kickoff = match.scheduledAt;
+    final place = (match.location != null && match.location!.trim().isNotEmpty)
+        ? match.location!.trim()
+        : home?.homeLocation?.trim();
     final subtitle = [
       if (kickoff != null) formatMatchKickoff(kickoff),
       'Round ${match.round}',
-      if (match.location != null && match.location!.trim().isNotEmpty)
-        match.location!.trim(),
+      if (place != null && place.isNotEmpty) place,
     ].join(' · ');
 
     return Card(

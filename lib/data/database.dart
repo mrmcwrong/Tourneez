@@ -9,7 +9,7 @@ import 'package:tourneez/domain/series_score.dart';
 part 'database.g.dart';
 
 /// Keep in sync with [AppDatabase.schemaVersion] and docs/SCHEMA_PLAN.md.
-const tourneezSchemaVersion = 11;
+const tourneezSchemaVersion = 12;
 
 class TeamsTable extends Table {
   IntColumn get id => integer().autoIncrement()();
@@ -22,6 +22,9 @@ class TeamsTable extends Table {
   TextColumn get homeLocation => text().nullable()();
   /// Soft FK to [VenuesTable] — optional home ground / field.
   IntColumn get homeVenueId => integer().nullable()();
+  /// White disc behind the logo on the parent page. Off when it clashes.
+  BoolColumn get showLogoCircle =>
+      boolean().withDefault(const Constant(true))();
   IntColumn get titlesWon => integer().withDefault(const Constant(0))();
   /// JSON array of title names, e.g. `["Premier League S1","Cup Final"]`.
   TextColumn get titlesJson => text().withDefault(const Constant('[]'))();
@@ -252,6 +255,9 @@ class AppDatabase extends _$AppDatabase {
           if (from < 11) {
             await m.addColumn(teamsTable, teamsTable.homeVenueId);
           }
+          if (from < 12) {
+            await m.addColumn(teamsTable, teamsTable.showLogoCircle);
+          }
         },
         beforeOpen: (details) async {
           // SQLite keeps FKs off unless enabled per connection.
@@ -409,6 +415,7 @@ Team teamFromRow(TeamsTableData row) => Team(
       powerRating: row.powerRating,
       homeLocation: row.homeLocation,
       homeVenueId: row.homeVenueId,
+      showLogoCircle: row.showLogoCircle,
       titles: parseTitlesJson(row.titlesJson, legacyCount: row.titlesWon),
       promotionsWon: row.promotionsWon,
       relegations: row.relegations,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,9 +9,12 @@ import 'package:tourneez/domain/models.dart';
 import 'package:tourneez/domain/schedule_format.dart';
 import 'package:tourneez/domain/series_score.dart';
 import 'package:tourneez/domain/venue_maps.dart';
+import 'package:tourneez/features/home/parent_home_screen.dart';
 import 'package:tourneez/features/tournament/bracket_view.dart';
 import 'package:tourneez/features/tournament/tournament_schedule_tab.dart';
 import 'package:tourneez/providers/providers.dart';
+import 'package:tourneez/providers/viewer_provider.dart';
+import 'package:tourneez/ui/viewer_controls.dart';
 import 'package:tourneez/ui/format_config_editor.dart';
 import 'package:tourneez/ui/theme.dart';
 import 'package:tourneez/ui/team_editor.dart';
@@ -30,9 +35,25 @@ class TournamentHubScreen extends ConsumerStatefulWidget {
 class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
   bool _randomizing = false;
   bool _showBracket = false;
-  bool _simplifiedView = false;
+  bool _simplifiedView = true;
 
-  List<_HubTab> _tabsFor(Tournament tournament) {
+  List<_HubTab> _tabsFor(
+    Tournament tournament, {
+    required bool manager,
+    required FamilyViewSettings familyView,
+  }) {
+    if (!manager) {
+      final tabs = <_HubTab>[
+        if (familyView.showScores)
+          const _HubTab('Matches', Icons.sports_soccer),
+        if (familyView.showSchedule)
+          const _HubTab('Schedule', Icons.event_outlined),
+        if (familyView.showStandings && tournament.format.showsStandings)
+          const _HubTab('Standings', Icons.table_chart_outlined),
+        const _HubTab('Teams', Icons.groups_outlined),
+      ];
+      return tabs;
+    }
     final tabs = <_HubTab>[
       const _HubTab('Matches', Icons.sports_soccer),
       const _HubTab('Schedule', Icons.event_outlined),
@@ -51,9 +72,24 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
     TournamentTeam? home,
     TournamentTeam? away,
   ) async {
-    // Resolve series length from match data or tournament config.
+    if (match.isBye) return;
+    if (!ref.read(viewerProvider).isManager) {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ParentGameDetailScreen(
+            match: match,
+            home: home,
+            away: away,
+            title: 'Game',
+          ),
+        ),
+      );
+      return;
+    }
+    // League fixtures are single games. Series length applies to brackets only.
     var series = match.series;
-    if (series == null || series.length <= 1) {
+    if (match.isBracketMatch && (series == null || series.length <= 1)) {
       final tournament =
           ref.read(tournamentProvider(match.tournamentId)).asData?.value;
       if (tournament != null) {
@@ -66,32 +102,47 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
       }
     }
 
-    if (series != null && series.length > 1) {
-      await _editSeriesScore(match, home, away, series);
+    if (match.isBracketMatch && series != null && series.length > 1) {
+      try {
+        await _editSeriesScore(match, home, away, series);
+      } catch (e, st) {
+        debugPrint('Could not open series $e\n$st');
+        if (mounted) showAppSnackBar('Could not open this game.');
+      }
       return;
     }
 
+    final shownHome = match.homeScore ??
+        (!match.isBracketMatch ? match.series?.seriesHomeScore : null);
+    final shownAway = match.awayScore ??
+        (!match.isBracketMatch ? match.series?.seriesAwayScore : null);
     final homeCtrl = TextEditingController(
-      text: match.homeScore?.toString() ?? '0',
+      text: shownHome?.toString() ?? '0',
     );
     final awayCtrl = TextEditingController(
-      text: match.awayScore?.toString() ?? '0',
+      text: shownAway?.toString() ?? '0',
     );
     final locationCtrl = TextEditingController(text: match.location ?? '');
     final durationCtrl = TextEditingController(
       text: '${match.durationMinutes ?? defaultMatchDurationMinutes}',
     );
     DateTime? scheduledAt = match.scheduledAt;
-    int? selectedVenueId = match.venueId;
-    String? venueLabel;
+    int? selectedVenueId = match.venueId ?? home?.homeVenueId;
+    String? venueLabel = home?.homeLocation;
     if (selectedVenueId != null) {
-      final venues = await ref.read(venuesProvider.future);
-      final venue = venues.where((v) => v.id == selectedVenueId).firstOrNull;
-      if (venue != null) {
-        final parent = venue.parentVenueId == null
-            ? null
-            : venues.where((v) => v.id == venue.parentVenueId).firstOrNull;
-        venueLabel = venueDisplayLabel(venue, parent: parent);
+      try {
+        final venues = await ref
+            .read(venuesProvider.future)
+            .timeout(const Duration(seconds: 3));
+        final venue = venues.where((v) => v.id == selectedVenueId).firstOrNull;
+        if (venue != null) {
+          final parent = venue.parentVenueId == null
+              ? null
+              : venues.where((v) => v.id == venue.parentVenueId).firstOrNull;
+          venueLabel = venueDisplayLabel(venue, parent: parent);
+        }
+      } catch (e, st) {
+        debugPrint('Venue lookup failed for match ${match.id}: $e\n$st');
       }
     }
     var swapped = false;
@@ -99,7 +150,9 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
     var currentAway = away;
 
     if (!mounted) return;
-    final result = await showDialog<Object>(
+    final Object? result;
+    try {
+      result = await showDialog<Object>(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
@@ -297,6 +350,11 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
                   onPressed: () => Navigator.pop(ctx),
                   child: const Text('Cancel'),
                 ),
+                if (match.isCompleted)
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, 'clear'),
+                    child: const Text('Clear result'),
+                  ),
                 TextButton.icon(
                   onPressed: () => Navigator.pop(ctx, 'simulate'),
                   icon: const Icon(Icons.casino_outlined, size: 18),
@@ -328,13 +386,28 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
         );
       },
     );
+    } catch (e, st) {
+      debugPrint('Could not open match ${match.id}: $e\n$st');
+      if (mounted) showAppSnackBar('Could not open this game.');
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 300), () {
+          homeCtrl.dispose();
+          awayCtrl.dispose();
+          locationCtrl.dispose();
+          durationCtrl.dispose();
+        }),
+      );
+      return;
+    }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      homeCtrl.dispose();
-      awayCtrl.dispose();
-      locationCtrl.dispose();
-      durationCtrl.dispose();
-    });
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 300), () {
+        homeCtrl.dispose();
+        awayCtrl.dispose();
+        locationCtrl.dispose();
+        durationCtrl.dispose();
+      }),
+    );
     if (result == null) return;
 
     final repo = ref.read(repositoryProvider);
@@ -342,10 +415,36 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
     if (result == 'simulate') {
       final err = await repo.randomizeMatchResult(match.id);
       if (mounted && err != null) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(err)));
+        showAppSnackBar(err);
       }
+      return;
+    }
+
+    if (result == 'clear') {
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Clear this result?'),
+          content: const Text(
+            'The score is removed and the game goes back to unplayed. '
+            'Later bracket games that depended on it are cleared too.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Clear result'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      final err = await repo.clearMatchResult(match.id);
+      if (mounted && err != null) showAppSnackBar(err);
       return;
     }
 
@@ -398,11 +497,7 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
         clearVenue: result.venueId == null,
       );
       if (detailErr != null) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(detailErr)));
-        }
+        if (mounted) showAppSnackBar(detailErr);
         return;
       }
       final err = await repo.recordScore(
@@ -411,9 +506,7 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
         awayScore: result.scores.$2,
       );
       if (mounted && err != null) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(err)));
+        showAppSnackBar(err);
       }
     }
   }
@@ -606,6 +699,11 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
                   onPressed: () => Navigator.pop(ctx),
                   child: const Text('Cancel'),
                 ),
+                if (match.isCompleted)
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, 'clear'),
+                    child: const Text('Clear result'),
+                  ),
                 TextButton.icon(
                   onPressed: () => Navigator.pop(ctx, 'simulate'),
                   icon: const Icon(Icons.casino_outlined, size: 18),
@@ -637,19 +735,53 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
       },
     );
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      for (final c in homeCtrls) {
-        c.dispose();
-      }
-      for (final c in awayCtrls) {
-        c.dispose();
-      }
-    });
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 300), () {
+        for (final c in homeCtrls) {
+          c.dispose();
+        }
+        for (final c in awayCtrls) {
+          c.dispose();
+        }
+      }),
+    );
     if (result == null) return;
 
     final repo = ref.read(repositoryProvider);
     if (result == 'simulate') {
       final err = await repo.randomizeMatchResult(match.id);
+      if (mounted && err != null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(err)));
+      }
+      return;
+    }
+
+    if (result == 'clear') {
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Clear this result?'),
+          content: const Text(
+            'Every leg is removed and the series goes back to unplayed. '
+            'Later bracket games that depended on it are cleared too.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Clear result'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      final err = await repo.clearMatchResult(match.id);
       if (mounted && err != null) {
         ScaffoldMessenger.of(
           context,
@@ -789,7 +921,14 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
           );
         }
 
-        final tabs = _tabsFor(tournament);
+        final manager = ref.watch(viewerProvider).isManager;
+        final familyView =
+            ref.watch(familyViewForTournamentProvider(tournament.id));
+        final tabs = _tabsFor(
+          tournament,
+          manager: manager,
+          familyView: familyView,
+        );
 
         return DefaultTabController(
           key: ValueKey('${tournament.format.name}-${tabs.length}'),
@@ -803,7 +942,8 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
               ),
               title: Text(tournament.name),
               actions: [
-                if (tournament.status != TournamentStatus.draft)
+                if ((manager || familyView.showVenues) &&
+                    tournament.status != TournamentStatus.draft)
                   IconButton(
                     tooltip: 'Venues on map',
                     onPressed: () => showVenueOverviewSheet(
@@ -814,7 +954,7 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
                     ),
                     icon: const Icon(Icons.map_outlined),
                   ),
-                if (tournament.status == TournamentStatus.active)
+                if (manager && tournament.status == TournamentStatus.active)
                   IconButton(
                     tooltip: 'Simulate all pending by power',
                     onPressed: _randomizing
@@ -833,9 +973,9 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
                   child: Center(
                     child: StatusChip(
                       status: tournament.status,
-                      onTap:
-                          tournament.status == TournamentStatus.completed ||
-                              tournament.status == TournamentStatus.active
+                      onTap: manager &&
+                              (tournament.status == TournamentStatus.completed ||
+                                  tournament.status == TournamentStatus.active)
                           ? () => _offerResetScores(tournament)
                           : null,
                     ),
@@ -850,47 +990,48 @@ class _TournamentHubScreenState extends ConsumerState<TournamentHubScreen> {
                 ],
               ),
             ),
-            body: TabBarView(
-              physics: const NeverScrollableScrollPhysics(),
-              children: [
-                for (final tab in tabs)
-                  switch (tab.label) {
-                    'Matches' => _MatchesTab(
-                      tournament: tournament,
-                      showBracket: _showBracket,
-                      simplifiedView: _simplifiedView,
-                      onToggleView: tournament.format.hasBracketView
-                          ? (bracket) => setState(() => _showBracket = bracket)
-                          : null,
-                      onToggleSimplified: (v) =>
-                          setState(() => _simplifiedView = v),
-                      onEditScore: _editScore,
-                      onSimulate: tournament.status == TournamentStatus.active
-                          ? _simulateMatch
-                          : null,
-                    ),
-                    'Schedule' => TournamentScheduleTab(
-                      tournament: tournament,
-                      onEditMatch: _editScore,
-                    ),
-                    'Standings' => _StandingsTab(tournament: tournament),
-                    'Teams' => _TeamsTab(
-                      tournamentId: widget.tournamentId,
-                      isDraft: tournament.status == TournamentStatus.draft,
-                    ),
-                    'Settings' => _SettingsTab(
-                      tournament: tournament,
-                      onRandomize: () => _randomize(tournament),
-                      randomizing: _randomizing,
-                    ),
-                    _ => const SizedBox.shrink(),
-                  },
-              ],
+            body: _HubTabHost(
+              tabs: tabs,
+              builder: (tab) => _hubTabBody(tab, tournament),
             ),
           ),
         );
       },
     );
+  }
+
+  Widget _hubTabBody(_HubTab tab, Tournament tournament) {
+    return switch (tab.label) {
+      'Matches' => _MatchesTab(
+        tournament: tournament,
+        showBracket: _showBracket,
+        simplifiedView: _simplifiedView,
+        onToggleView: tournament.format.hasBracketView
+            ? (bracket) => setState(() => _showBracket = bracket)
+            : null,
+        onToggleSimplified: (v) => setState(() => _simplifiedView = v),
+        onEditScore: _editScore,
+        onSimulate: ref.watch(viewerProvider).isManager &&
+                tournament.status == TournamentStatus.active
+            ? _simulateMatch
+            : null,
+      ),
+      'Schedule' => TournamentScheduleTab(
+        tournament: tournament,
+        onEditMatch: _editScore,
+      ),
+      'Standings' => _StandingsTab(tournament: tournament),
+      'Teams' => _TeamsTab(
+        tournamentId: widget.tournamentId,
+        isDraft: tournament.status == TournamentStatus.draft,
+      ),
+      'Settings' => _SettingsTab(
+        tournament: tournament,
+        onRandomize: () => _randomize(tournament),
+        randomizing: _randomizing,
+      ),
+      _ => const SizedBox.shrink(),
+    };
   }
 }
 
@@ -898,6 +1039,54 @@ class _HubTab {
   const _HubTab(this.label, this.icon);
   final String label;
   final IconData icon;
+}
+
+class _HubTabHost extends StatefulWidget {
+  const _HubTabHost({required this.tabs, required this.builder});
+
+  final List<_HubTab> tabs;
+  final Widget Function(_HubTab tab) builder;
+
+  @override
+  State<_HubTabHost> createState() => _HubTabHostState();
+}
+
+class _HubTabHostState extends State<_HubTabHost> {
+  TabController? _controller;
+  int _index = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final next = DefaultTabController.of(context);
+    if (!identical(next, _controller)) {
+      _controller?.removeListener(_onTab);
+      _controller = next;
+      _controller!.addListener(_onTab);
+      _index = next.index;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.removeListener(_onTab);
+    super.dispose();
+  }
+
+  void _onTab() {
+    final i = _controller?.index ?? 0;
+    if (i != _index) setState(() => _index = i);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final i = _index.clamp(0, widget.tabs.length - 1);
+    final tab = widget.tabs[i];
+    return KeyedSubtree(
+      key: ValueKey(tab.label),
+      child: widget.builder(tab),
+    );
+  }
 }
 
 class _MatchesTab extends ConsumerWidget {
@@ -963,15 +1152,20 @@ class _MatchesTab extends ConsumerWidget {
           );
         }
 
-        final canEdit =
-            tournament.status == TournamentStatus.active ||
-            tournament.status == TournamentStatus.completed;
+        final manager = ref.watch(viewerProvider).isManager;
+        final showPower = manager ||
+            ref.watch(familyViewForTournamentProvider(tournament.id)).showPower;
+        final canEdit = manager &&
+            (tournament.status == TournamentStatus.active ||
+                tournament.status == TournamentStatus.completed);
 
         void openMatch(Match m) {
-          if (!canEdit) return;
           if (m.isBye) return;
-          if (m.homeTeamId == null || m.awayTeamId == null) return;
-          onEditScore(m, teams[m.homeTeamId!], teams[m.awayTeamId!]);
+          onEditScore(
+            m,
+            m.homeTeamId == null ? null : teams[m.homeTeamId!],
+            m.awayTeamId == null ? null : teams[m.awayTeamId!],
+          );
         }
 
         return Column(
@@ -1046,7 +1240,7 @@ class _MatchesTab extends ConsumerWidget {
                       matches: matches,
                       teamsById: teams,
                       simplified: simplifiedView,
-                      onMatchTap: canEdit ? openMatch : null,
+                      onMatchTap: openMatch,
                     )
                   : _MatchesList(
                       matches: matches,
@@ -1055,6 +1249,7 @@ class _MatchesTab extends ConsumerWidget {
                       simplified: simplifiedView,
                       onEditScore: onEditScore,
                       onSimulate: onSimulate,
+                      showPower: showPower,
                     ),
             ),
           ],
@@ -1072,12 +1267,14 @@ class _MatchesList extends StatelessWidget {
     required this.onEditScore,
     this.simplified = false,
     this.onSimulate,
+    this.showPower = true,
   });
 
   final List<Match> matches;
   final Map<int, TournamentTeam> teams;
   final bool canEdit;
   final bool simplified;
+  final bool showPower;
   final void Function(Match match, TournamentTeam? home, TournamentTeam? away)
   onEditScore;
   final Future<void> Function(Match match)? onSimulate;
@@ -1090,47 +1287,51 @@ class _MatchesList extends StatelessWidget {
       byRound.putIfAbsent(m.round, () => <Match>[]).add(m);
     }
     final rounds = byRound.keys.toList()..sort();
+    final items = <Object>[];
+    for (final round in rounds) {
+      items.add(round);
+      items.addAll(byRound[round]!);
+    }
 
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-      itemCount: rounds.length,
+      itemCount: items.length,
       addAutomaticKeepAlives: false,
       itemBuilder: (context, index) {
-        final round = rounds[index];
-        final roundMatches = byRound[round]!;
-        final stageLabel = _stageLabel(roundMatches.first, round);
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
-              child: Text(stageLabel, style: TourneezText.section),
+        final item = items[index];
+        if (item is int) {
+          final round = item;
+          final roundMatches = byRound[round]!;
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
+            child: Text(
+              _stageLabel(roundMatches.first, round),
+              style: TourneezText.section,
             ),
-            ...roundMatches.map(
-              (m) => RepaintBoundary(
-                child: _MatchCard(
-                  match: m,
-                  home: m.homeTeamId != null ? teams[m.homeTeamId!] : null,
-                  away: m.awayTeamId != null ? teams[m.awayTeamId!] : null,
-                  canEdit: canEdit,
-                  simplified: simplified,
-                  onEdit: () => onEditScore(
-                    m,
-                    m.homeTeamId != null ? teams[m.homeTeamId!] : null,
-                    m.awayTeamId != null ? teams[m.awayTeamId!] : null,
-                  ),
-                  onSimulate:
-                      onSimulate != null &&
-                          m.status == MatchStatus.pending &&
-                          m.homeTeamId != null &&
-                          m.awayTeamId != null
-                      ? () => onSimulate!(m)
-                      : null,
-                ),
-              ),
+          );
+        }
+        final m = item as Match;
+        return RepaintBoundary(
+          child: _MatchCard(
+            match: m,
+            home: m.homeTeamId != null ? teams[m.homeTeamId!] : null,
+            away: m.awayTeamId != null ? teams[m.awayTeamId!] : null,
+            canEdit: canEdit,
+            simplified: simplified,
+            showPower: showPower,
+            onEdit: () => onEditScore(
+              m,
+              m.homeTeamId != null ? teams[m.homeTeamId!] : null,
+              m.awayTeamId != null ? teams[m.awayTeamId!] : null,
             ),
-          ],
+            onSimulate:
+                onSimulate != null &&
+                    m.status == MatchStatus.pending &&
+                    m.homeTeamId != null &&
+                    m.awayTeamId != null
+                ? () => onSimulate!(m)
+                : null,
+          ),
         );
       },
     );
@@ -1158,6 +1359,7 @@ class _MatchCard extends StatelessWidget {
     required this.onEdit,
     this.simplified = false,
     this.onSimulate,
+    this.showPower = true,
   });
 
   final Match match;
@@ -1165,6 +1367,7 @@ class _MatchCard extends StatelessWidget {
   final TournamentTeam? away;
   final bool canEdit;
   final bool simplified;
+  final bool showPower;
   final VoidCallback onEdit;
   final VoidCallback? onSimulate;
 
@@ -1202,17 +1405,11 @@ class _MatchCard extends StatelessWidget {
       color: tint,
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap:
-            canEdit &&
-                !match.isBye &&
-                match.homeTeamId != null &&
-                match.awayTeamId != null
-            ? onEdit
-            : null,
+        onTap: match.isBye ? null : onEdit,
         child: Padding(
           padding: EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: simplified ? 12 : 12,
+            horizontal: simplified ? 8 : 12,
+            vertical: simplified ? 16 : 12,
           ),
           child: Column(
             children: [
@@ -1277,30 +1474,31 @@ class _MatchCard extends StatelessWidget {
                     ),
                 ],
               ),
-              if (!simplified) ...[
-                Builder(
-                  builder: (context) {
-                    final meta = [
-                      if (match.scheduledAt != null)
-                        formatMatchKickoff(match.scheduledAt!),
-                      if (match.location != null &&
+              Builder(
+                builder: (context) {
+                  final place = (match.location != null &&
                           match.location!.trim().isNotEmpty)
-                        match.location!.trim(),
-                    ];
-                    if (meta.isEmpty) return const SizedBox.shrink();
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text(
-                        meta.join(' · '),
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurface.withValues(alpha: 0.55),
-                            ),
-                      ),
-                    );
-                  },
-                ),
-              ],
-              if (!simplified && odds != null) ...[
+                      ? match.location!.trim()
+                      : home?.homeLocation?.trim();
+                  final meta = [
+                    if (!simplified && match.scheduledAt != null)
+                      formatMatchKickoff(match.scheduledAt!),
+                    if (place != null && place.isNotEmpty) place,
+                  ];
+                  if (meta.isEmpty) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      meta.join(' · '),
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurface.withValues(alpha: 0.55),
+                          ),
+                    ),
+                  );
+                },
+              ),
+              if (!simplified && showPower && odds != null) ...[
                 const SizedBox(height: 6),
                 Text(
                   '${odds.summary}  ·  PWR ${home!.powerRating}–${away!.powerRating}',
@@ -1333,18 +1531,24 @@ class _TeamSide extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final name = team?.displayName ?? placeholder ?? '—';
+    if (simplified) {
+      final width = MediaQuery.sizeOf(context).width;
+      final logoSize = (width * 0.2).clamp(56.0, 92.0);
+      return Center(
+        child: TeamLogo(
+          path: team?.logoPath,
+          name: name,
+          colorArgb: team?.colorArgb,
+          size: logoSize,
+        ),
+      );
+    }
     final logo = TeamLogo(
       path: team?.logoPath,
       name: name,
       colorArgb: team?.colorArgb,
-      size: simplified ? 40 : 32,
+      size: 32,
     );
-    if (simplified) {
-      return Align(
-        alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
-        child: logo,
-      );
-    }
 
     final children = [
       logo,
@@ -1392,7 +1596,7 @@ class _StandingsTab extends ConsumerStatefulWidget {
 }
 
 class _StandingsTabState extends ConsumerState<_StandingsTab> {
-  bool _simple = false;
+  bool _simple = true;
   bool _showLines = true;
 
   /// Qualification (bracket/group advance) plus league promotion/relegation.
@@ -1593,15 +1797,16 @@ class _StandingsTable extends StatelessWidget {
 
   /// Lines span the full table width, including the horizontally scrolled
   /// middle columns, so they read as one continuous cut-off.
-  List<Widget> _lineOverlays() {
+  List<Widget> _lineOverlays({
+    required double headerH,
+    required double rowH,
+  }) {
     return [
       for (final m in markers)
         Positioned(
           left: 0,
           right: 0,
-          top: _headerHeight +
-              _rowHeight * (m.afterIndex + 1) -
-              _lineThickness / 2,
+          top: headerH + rowH * (m.afterIndex + 1) - _lineThickness / 2,
           height: _lineThickness,
           child: IgnorePointer(
             child: ColoredBox(color: m.color),
@@ -1614,10 +1819,20 @@ class _StandingsTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final table = simple ? _buildSimple(context) : _buildFull(context);
     if (markers.isEmpty) return table;
+    final width = MediaQuery.sizeOf(context).width;
+    final simpleRow = (width * 0.16).clamp(52.0, 76.0) + 18;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Stack(children: [table, ..._lineOverlays()]),
+        Stack(
+          children: [
+            table,
+            ..._lineOverlays(
+              headerH: simple ? 32 : _headerHeight,
+              rowH: simple ? simpleRow : _rowHeight,
+            ),
+          ],
+        ),
         _legend(context),
       ],
     );
@@ -1654,14 +1869,18 @@ class _StandingsTable extends StatelessWidget {
   /// Logo + goal difference + points only.
   Widget _buildSimple(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final width = MediaQuery.sizeOf(context).width;
+    final logoSize = (width * 0.16).clamp(52.0, 76.0);
+    final rowH = logoSize + 18;
+    final statW = width < 360 ? 44.0 : 52.0;
     Widget header(String text, {double? width, bool expand = false}) {
       final cell = SizedBox(
         width: width,
-        height: _headerHeight,
+        height: 32,
         child: Center(
           child: Text(
             text,
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
           ),
         ),
       );
@@ -1674,57 +1893,64 @@ class _StandingsTable extends StatelessWidget {
         children: [
           Row(
             children: [
-              header('#', width: 36),
-              header('Team', expand: true),
-              header('GD', width: 52),
-              header('Pts', width: 52),
+              header('#', width: 32),
+              header('', expand: true),
+              header('GD', width: statW),
+              header('Pts', width: statW),
             ],
           ),
           for (var i = 0; i < rows.length; i++)
             Container(
-              height: _rowHeight,
+              height: rowH,
               color: teamRowTint(rows[i].team?.colorArgb ?? 0xFF0B6E4F),
               child: Row(
                 children: [
                   SizedBox(
-                    width: 36,
+                    width: 32,
                     child: Center(
                       child: Text(
                         '${i + 1}',
                         style: TextStyle(
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
                           color: scheme.onSurface.withValues(alpha: 0.7),
                         ),
                       ),
                     ),
                   ),
                   Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
+                    child: Center(
                       child: TeamLogo(
                         path: rows[i].team?.logoPath,
                         name: rows[i].displayName,
                         colorArgb: rows[i].team?.colorArgb,
-                        size: 34,
+                        size: logoSize,
                       ),
                     ),
                   ),
                   SizedBox(
-                    width: 52,
+                    width: statW,
                     child: Center(
                       child: Text(
                         rows[i].goalDifference > 0
                             ? '+${rows[i].goalDifference}'
                             : '${rows[i].goalDifference}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                        ),
                       ),
                     ),
                   ),
                   SizedBox(
-                    width: 52,
+                    width: statW,
                     child: Center(
                       child: Text(
                         '${rows[i].points}',
-                        style: const TextStyle(fontWeight: FontWeight.w800),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
                       ),
                     ),
                   ),
@@ -1919,7 +2145,11 @@ class _TeamsTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final teamsAsync = ref.watch(tournamentTeamsProvider(tournamentId));
     final libraryAsync = ref.watch(teamsProvider);
-    final canReorder = ref.watch(canReorderSeedsProvider(tournamentId));
+    final manager = ref.watch(viewerProvider).isManager;
+    final showPower = manager ||
+        ref.watch(familyViewForTournamentProvider(tournamentId)).showPower;
+    final canReorder =
+        manager && ref.watch(canReorderSeedsProvider(tournamentId));
 
     return teamsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -1933,7 +2163,9 @@ class _TeamsTab extends ConsumerWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      canReorder
+                      !manager
+                          ? 'Roster for this event.'
+                          : canReorder
                           ? (isDraft
                                 ? 'Drag to set seeds · add or remove before starting.'
                                 : 'Drag to change seeds (no games played yet).')
@@ -1941,7 +2173,7 @@ class _TeamsTab extends ConsumerWidget {
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
-                  if (isDraft)
+                  if (manager && isDraft)
                     FilledButton.tonalIcon(
                       onPressed: () => _addTeamsSheet(
                         context,
@@ -2030,13 +2262,15 @@ class _TeamsTab extends ConsumerWidget {
                                 'Seed ${t.seed ?? (index + 1)}',
                                 if (t.groupLabel != null)
                                   'Group ${t.groupLabel}',
-                                'PWR ${t.powerRating}',
+                                if (showPower) 'PWR ${t.powerRating}',
                                 if (t.homeLocation != null &&
                                     t.homeLocation!.trim().isNotEmpty)
                                   t.homeLocation!,
                               ].join(' · '),
                             ),
-                            trailing: isDraft
+                            trailing: !manager
+                                ? null
+                                : isDraft
                                 ? IconButton(
                                     tooltip: 'Remove',
                                     icon: const Icon(
@@ -2059,7 +2293,7 @@ class _TeamsTab extends ConsumerWidget {
                                     },
                                   )
                                 : const Icon(Icons.edit_outlined),
-                            onTap: t.team == null
+                            onTap: !manager || t.team == null
                                 ? null
                                 : () => showTeamEditorSheet(
                                     context,
@@ -2263,6 +2497,22 @@ class _SettingsTabState extends ConsumerState<_SettingsTab> {
           title: const Text('Status'),
           subtitle: Text(tournament.status.name),
         ),
+        const SizedBox(height: 8),
+        if (tournament.leagueId == null)
+          FamilyViewSettingsCard(
+            settings: _config.familyView,
+            onChanged: (next) => setState(
+              () => _config = _config.copyWith(familyView: next),
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              'What families see is set on the league.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
         const SizedBox(height: 8),
         TextField(
           controller: _name,

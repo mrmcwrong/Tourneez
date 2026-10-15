@@ -8,8 +8,8 @@ import 'package:tourneez/ui/widgets.dart';
 
 const _matchWidth = 148.0;
 const _matchHeight = 148.0;
-const _simpleMatchWidth = 120.0;
-const _simpleMatchHeight = 120.0;
+const _simpleMatchWidth = 132.0;
+const _simpleMatchHeight = 132.0;
 const _roundGap = 48.0;
 const _pad = 16.0;
 
@@ -556,7 +556,7 @@ class _Side extends StatelessWidget {
       path: team?.logoPath,
       name: name,
       colorArgb: team?.colorArgb,
-      size: simplified ? 44 : 28,
+      size: simplified ? 58 : 28,
     );
     if (simplified) {
       return Row(
